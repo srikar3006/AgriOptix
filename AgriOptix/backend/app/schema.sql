@@ -47,3 +47,19 @@ CREATE TABLE IF NOT EXISTS settlements (
  sale_value NUMERIC, logistics_cost NUMERIC, handling_cost NUMERIC,
  net_settlement NUMERIC, status TEXT, created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS ai_quality_analysis (
+ id BIGSERIAL PRIMARY KEY,
+ harvest_id BIGINT NOT NULL REFERENCES harvests(id) ON DELETE CASCADE,
+ crop_name TEXT NOT NULL,
+ overall_quality TEXT NOT NULL,
+ visible_damage TEXT NOT NULL,
+ ripeness_maturity TEXT NOT NULL,
+ size TEXT NOT NULL,
+ freshness_condition TEXT NOT NULL,
+ estimated_shelf_life TEXT NOT NULL,
+ confidence NUMERIC,
+ analyzed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ image_references JSONB NOT NULL DEFAULT '[]'::jsonb,
+ UNIQUE(harvest_id)
+);

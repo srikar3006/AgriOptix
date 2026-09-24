@@ -39,6 +39,7 @@ export type Workflow = {
   harvest: any | null;
   photos: string[];
   quality: any | null;
+  aiQuality: any | null;
   perishability: any | null;
   buyers: any[];
   optimization: any | null;
@@ -60,6 +61,8 @@ const EMPTY: Workflow = {
   photos: [],
 
   quality: null,
+
+  aiQuality: null,
 
   perishability: null,
 

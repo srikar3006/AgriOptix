@@ -1,16 +1,30 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Camera, CalendarDays, MapPin, X, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  Camera,
+  CalendarDays,
+  MapPin,
+  X,
+  ChevronRight,
+  RotateCcw,
+} from "lucide-react";
 import { useWorkflow } from "../../../lib/store";
 
-const REQUIRED = 3;
+const REQUIRED = 2;
+const MAX_PHOTOS = 4;
 
 function formatHarvestDate(value: unknown) {
   if (!value) return "";
+
   const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return String(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "short",
@@ -20,54 +34,402 @@ function formatHarvestDate(value: unknown) {
   }).format(date);
 }
 
+async function hashImage(dataUrl: string) {
+  try {
+    const encoded = dataUrl.split(",", 2)[1] || dataUrl;
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return `${dataUrl.length}:${dataUrl.slice(-64)}`;
+  }
+}
+
 export default function TakePhotos() {
   const router = useRouter();
   const { wf, setWf } = useWorkflow();
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const retakeIndexRef = useRef<number | null>(null);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const next = [...wf.photos, String(reader.result)].slice(0, REQUIRED);
-      setWf({ photos: next });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  }
-
-  function remove(index: number) {
-    setWf({ photos: wf.photos.filter((_, i) => i !== index) });
-  }
-
-  function openPicker() {
-    if (wf.photos.length < REQUIRED) inputRef.current?.click();
-  }
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [capturing, setCapturing] = useState(false);
 
   const harvest = wf.harvest || {};
+
   const crop = harvest.crop || "produce";
-  const quantity = harvest.quantity_kg ?? harvest.quantity;
-  const harvestDate = formatHarvestDate(harvest.harvest_time ?? harvest.harvestDate ?? harvest.date);
-  const location = harvest.location ?? harvest.location_name ?? harvest.village ?? "Use current location";
+
+  const quantity =
+    harvest.quantity_kg ??
+    harvest.quantity ??
+    "";
+
+  const harvestDate = formatHarvestDate(
+    harvest.harvest_time ??
+      harvest.harvestDate ??
+      harvest.date
+  );
+
+  const location =
+    harvest.location ??
+    harvest.location_name ??
+    harvest.village ??
+    "Use current location";
+
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((track) => {
+      track.stop();
+    });
+
+    streamRef.current = null;
+
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraOpen(false);
+    setCameraBusy(false);
+    setCapturing(false);
+    retakeIndexRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((track) => {
+        track.stop();
+      });
+
+      streamRef.current = null;
+    };
+  }, []);
+
+  async function openCamera(retakeIndex: number | null = null) {
+    if (
+      retakeIndex === null &&
+      wf.photos.length >= MAX_PHOTOS
+    ) {
+      return;
+    }
+
+    if (cameraBusy) {
+      return;
+    }
+
+    setCameraError("");
+    setCameraBusy(true);
+
+    retakeIndexRef.current = retakeIndex;
+
+    try {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
+        throw new Error(
+          "This browser does not support direct camera access."
+        );
+      }
+
+      /*
+       * Always use the real browser/device camera.
+       * No file picker is used.
+       */
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: {
+              ideal: "environment",
+            },
+            width: {
+              ideal: 1280,
+            },
+            height: {
+              ideal: 720,
+            },
+          },
+          audio: false,
+        });
+
+      streamRef.current = stream;
+
+      setCameraOpen(true);
+
+      requestAnimationFrame(() => {
+        const video = videoRef.current;
+
+        if (!video) {
+          return;
+        }
+
+        video.srcObject = stream;
+
+        video
+          .play()
+          .catch(() => {
+            setCameraError(
+              "Camera preview could not start. Please try again."
+            );
+          });
+      });
+    } catch (error) {
+      let message =
+        "Camera is unavailable. Please try again.";
+
+      if (
+        error instanceof DOMException
+      ) {
+        if (error.name === "NotAllowedError") {
+          message =
+            "Camera permission is required to capture produce photos.";
+        } else if (
+          error.name === "NotFoundError"
+        ) {
+          message =
+            "No camera was found on this device.";
+        } else if (
+          error.name === "NotReadableError"
+        ) {
+          message =
+            "The camera is already being used by another application.";
+        } else if (
+          error.name === "SecurityError"
+        ) {
+          message =
+            "Camera access is blocked by browser security settings.";
+        }
+      } else if (error instanceof Error) {
+        message = error.message;
+      }
+
+      setCameraError(message);
+      setCameraOpen(false);
+      streamRef.current?.getTracks().forEach((track) => {
+        track.stop();
+      });
+      streamRef.current = null;
+    } finally {
+      setCameraBusy(false);
+    }
+  }
+
+  async function capturePhoto() {
+    if (capturing) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (
+      !video ||
+      !canvas ||
+      !video.videoWidth ||
+      !video.videoHeight
+    ) {
+      setCameraError(
+        "Camera is not ready yet. Please wait a moment and try again."
+      );
+      return;
+    }
+
+    setCapturing(true);
+    setCameraError("");
+
+    try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        throw new Error(
+          "Unable to capture this camera frame."
+        );
+      }
+
+      /*
+       * IMPORTANT:
+       * This captures the CURRENT LIVE VIDEO FRAME.
+       * It does not use a file picker or previous image.
+       */
+      context.drawImage(
+        video,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      const image = canvas.toDataURL(
+        "image/jpeg",
+        0.88
+      );
+
+      if (!image.startsWith("data:image/jpeg")) {
+        throw new Error(
+          "Captured image format is invalid."
+        );
+      }
+
+      if (image.length < 10_000) {
+        throw new Error(
+          "Captured image is too small. Please try again."
+        );
+      }
+
+      const imageHash = await hashImage(image);
+
+      console.info(
+        "[AgriOptix Camera]",
+        {
+          imageMimeType: "image/jpeg",
+          imageSize: image.length,
+          imageHash,
+        }
+      );
+
+      const currentPhotos = [
+        ...(wf.photos || []),
+      ];
+
+      const targetIndex =
+        retakeIndexRef.current;
+
+      /*
+       * Check actual image content.
+       */
+      const existingHashes =
+        await Promise.all(
+          currentPhotos.map((photo) =>
+            hashImage(photo)
+          )
+        );
+
+      const duplicate =
+        existingHashes.some(
+          (existingHash, index) =>
+            index !== targetIndex &&
+            existingHash === imageHash
+        );
+
+      if (duplicate) {
+        setCameraError(
+          "This photo is identical to an existing capture. Change the angle or position and capture again."
+        );
+        return;
+      }
+
+      if (
+        targetIndex !== null &&
+        targetIndex >= 0 &&
+        targetIndex < currentPhotos.length
+      ) {
+        currentPhotos[targetIndex] = image;
+      } else {
+        currentPhotos.push(image);
+      }
+
+      const nextPhotos =
+        currentPhotos.slice(0, MAX_PHOTOS);
+
+      setWf({
+        photos: nextPhotos,
+        aiQuality: null,
+      });
+
+      retakeIndexRef.current = null;
+      setCameraError("");
+
+      /*
+       * Keep camera open for additional captures.
+       * Stop only after 4 photos.
+       */
+      if (nextPhotos.length >= MAX_PHOTOS) {
+        stopCamera();
+      }
+    } catch (error) {
+      setCameraError(
+        error instanceof Error
+          ? error.message
+          : "Unable to capture the camera frame. Please try again."
+      );
+    } finally {
+      setCapturing(false);
+    }
+  }
+
+  function removePhoto(index: number) {
+    const nextPhotos = wf.photos.filter(
+      (_, photoIndex) =>
+        photoIndex !== index
+    );
+
+    setWf({
+      photos: nextPhotos,
+      aiQuality: null,
+    });
+
+    setCameraError("");
+  }
+
+  function retakePhoto(index: number) {
+    setCameraError("");
+    void openCamera(index);
+  }
+
+  function continueToQuality() {
+    if (
+      wf.photos.length < REQUIRED ||
+      wf.photos.length > MAX_PHOTOS
+    ) {
+      setCameraError(
+        "Capture 2–4 produce photos before starting AI analysis."
+      );
+      return;
+    }
+
+    /*
+     * Existing project quality route.
+     * No new navigation flow is created.
+     */
+    router.push(
+      "/farmer/quality?autoAnalyze=1"
+    );
+  }
 
   return (
     <main className="photos-page">
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={onFile}
-        className="photos-file-input"
+      <canvas
+        ref={canvasRef}
+        hidden
       />
 
       <section className="photos-container">
         <div className="photos-step-title">
-          <span className="photos-step-number">3.</span>
+          <span className="photos-step-number">
+            3.
+          </span>
+
           <span className="photos-step-divider" />
-          <h1>Upload Photo &amp; Details</h1>
+
+          <h1>
+            Capture Produce Photos
+          </h1>
         </div>
 
         <div className="photos-card">
@@ -75,96 +437,313 @@ export default function TakePhotos() {
             <button
               type="button"
               className="photos-back"
-              onClick={() => router.push("/farmer/harvest")}
+              onClick={() =>
+                router.push(
+                  "/farmer/harvest"
+                )
+              }
               aria-label="Back to harvest"
             >
-              <ArrowLeft size={34} strokeWidth={2.2} />
+              <ArrowLeft
+                size={34}
+                strokeWidth={2.2}
+              />
             </button>
+
             <span className="photos-header-divider" />
-            <h2>Add Photos</h2>
-            <span className="photos-required" aria-label="Required">*</span>
+
+            <h2>
+              Capture Produce Photos
+            </h2>
+
+            <span className="photos-required">
+              *
+            </span>
           </div>
 
-          <div className="photos-grid" aria-label={`Photos for ${crop}`}>
-            {Array.from({ length: REQUIRED }).map((_, index) => {
-              const src = wf.photos[index];
+          <p className="photos-camera-help">
+            Use the live device camera to
+            capture 2–4 clear views of the
+            produce. No file upload is used.
+          </p>
+
+          {cameraError ? (
+            <div
+              className="photos-camera-error"
+              role="alert"
+            >
+              {cameraError}
+            </div>
+          ) : null}
+
+          <div
+            className="photos-grid"
+            aria-label={`Photos for ${crop}`}
+          >
+            {Array.from({
+              length: MAX_PHOTOS,
+            }).map((_, index) => {
+              const src =
+                wf.photos[index];
 
               if (src) {
                 return (
-                  <div className="photos-tile photos-tile-filled" key={index}>
-                    <img src={src} alt={`${crop} photo ${index + 1}`} />
-                    <button
-                      type="button"
-                      className="photos-remove"
-                      onClick={() => remove(index)}
-                      aria-label={`Remove photo ${index + 1}`}
-                    >
-                      <X size={18} />
-                    </button>
+                  <div
+                    className="photos-tile photos-tile-filled"
+                    key={index}
+                  >
+                    <img
+                      src={src}
+                      alt={`${crop} captured photo ${
+                        index + 1
+                      }`}
+                    />
+
+                    <div className="photos-photo-actions">
+                      <button
+                        type="button"
+                        className="photos-action"
+                        onClick={() =>
+                          retakePhoto(index)
+                        }
+                        title="Retake photo"
+                        aria-label={`Retake photo ${
+                          index + 1
+                        }`}
+                      >
+                        <RotateCcw
+                          size={18}
+                        />
+                      </button>
+
+                      <button
+                        type="button"
+                        className="photos-action"
+                        onClick={() =>
+                          removePhoto(index)
+                        }
+                        title="Remove photo"
+                        aria-label={`Remove photo ${
+                          index + 1
+                        }`}
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
                   </div>
                 );
               }
 
               return (
-                <button
-                  type="button"
-                  className="photos-tile photos-upload-tile"
-                  onClick={openPicker}
-                  aria-label={`Add photo ${index + 1}`}
+                <div
+                  className="photos-tile photos-empty-tile"
+                  key={index}
+                  aria-label={`Empty photo slot ${
+                    index + 1
+                  }`}
                 >
                   <span className="photos-camera-circle">
-                    <Camera size={42} strokeWidth={1.8} />
+                    <Camera
+                      size={34}
+                      strokeWidth={1.8}
+                    />
                   </span>
-                  <span className="photos-upload-text">{index === wf.photos.length ? "Add Photo" : `Photo ${index + 1}`}</span>
-                </button>
+
+                  <span className="photos-upload-text">
+                    Photo {index + 1}
+                  </span>
+
+                  <small>
+                    {index < REQUIRED
+                      ? "Required"
+                      : "Optional"}
+                  </small>
+                </div>
               );
             })}
           </div>
 
           <div className="photos-count">
-            {wf.photos.length} of {REQUIRED} photos captured
+            {wf.photos.length} of{" "}
+            {MAX_PHOTOS} photos captured ·
+            minimum {REQUIRED}
           </div>
 
+          <button
+            type="button"
+            className="photos-capture-primary"
+            onClick={() =>
+              void openCamera()
+            }
+            disabled={
+              cameraBusy ||
+              wf.photos.length >=
+                MAX_PHOTOS
+            }
+          >
+            <Camera size={24} />
+
+            {cameraBusy
+              ? "Opening camera…"
+              : wf.photos.length >=
+                MAX_PHOTOS
+              ? "Maximum photos captured"
+              : "Capture Produce Photos"}
+          </button>
+
+          {cameraOpen ? (
+            <div
+              className="camera-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Live produce camera"
+            >
+              <div className="camera-panel">
+                <div className="camera-header">
+                  <div>
+                    <strong>
+                      Live Camera
+                    </strong>
+
+                    <span>
+                      Point the camera at
+                      the produce
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={stopCamera}
+                    aria-label="Close camera"
+                  >
+                    <X size={25} />
+                  </button>
+                </div>
+
+                <div className="camera-preview-wrapper">
+                  <video
+                    ref={videoRef}
+                    className="camera-video"
+                    playsInline
+                    muted
+                    autoPlay
+                  />
+
+                  <div className="camera-live-label">
+                    <span />
+                    LIVE
+                  </div>
+                </div>
+
+                <div className="camera-photo-count">
+                  Photos captured:{" "}
+                  {wf.photos.length}/
+                  {MAX_PHOTOS}
+                </div>
+
+                <div className="camera-actions">
+                  <button
+                    type="button"
+                    className="camera-capture"
+                    onClick={() =>
+                      void capturePhoto()
+                    }
+                    disabled={capturing}
+                  >
+                    <Camera
+                      size={28}
+                    />
+
+                    {capturing
+                      ? "Capturing…"
+                      : "Capture"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="camera-cancel"
+                    onClick={stopCamera}
+                  >
+                    Close Camera
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="photos-detail-section">
-            <div className="photos-section-label">Harvest Date</div>
+            <div className="photos-section-label">
+              Harvest Date
+            </div>
+
             <div className="photos-detail-field">
-              <CalendarDays size={31} strokeWidth={2.1} className="photos-green-icon" />
+              <CalendarDays
+                size={31}
+                strokeWidth={2.1}
+                className="photos-green-icon"
+              />
+
               <div className="photos-detail-values">
-                <strong>{harvestDate || (quantity !== undefined && quantity !== null ? `${quantity} kg` : "Not set")}</strong>
-                {harvestDate && quantity !== undefined && quantity !== null ? (
-                  <span>{quantity} kg</span>
+                <strong>
+                  {harvestDate ||
+                    (quantity !==
+                      undefined &&
+                    quantity !== null
+                      ? `${quantity} kg`
+                      : "Not set")}
+                </strong>
+
+                {harvestDate &&
+                quantity !==
+                  undefined &&
+                quantity !== null ? (
+                  <span>
+                    {quantity} kg
+                  </span>
                 ) : null}
               </div>
             </div>
           </div>
 
           <div className="photos-detail-section photos-location-section">
-            <div className="photos-section-label">Location</div>
+            <div className="photos-section-label">
+              Location
+            </div>
+
             <div className="photos-location-row">
               <div className="photos-detail-field photos-location-field">
-                <MapPin size={34} strokeWidth={2.1} className="photos-green-icon" />
-                <strong>{location}</strong>
+                <MapPin
+                  size={34}
+                  strokeWidth={2.1}
+                  className="photos-green-icon"
+                />
+
+                <strong>
+                  {location}
+                </strong>
               </div>
-              {harvest.location || harvest.location_name ? (
-                <div className="photos-location-preview" aria-label="Location preview">
-                  <span className="photos-map-road road-one" />
-                  <span className="photos-map-road road-two" />
-                  <span className="photos-map-water" />
-                  <span className="photos-map-pin map-pin-one"><MapPin size={21} fill="currentColor" /></span>
-                  <span className="photos-map-pin map-pin-two"><MapPin size={21} fill="currentColor" /></span>
-                </div>
-              ) : null}
             </div>
           </div>
 
           <button
             type="button"
             className="photos-next"
-            disabled={wf.photos.length < REQUIRED}
-            onClick={() => router.push("/farmer/quality")}
+            disabled={
+              wf.photos.length <
+              REQUIRED
+            }
+            onClick={
+              continueToQuality
+            }
           >
-            <span>Next</span>
-            <ChevronRight size={31} strokeWidth={2.5} />
+            <span>
+              Analyze Quality
+            </span>
+
+            <ChevronRight
+              size={31}
+              strokeWidth={2.5}
+            />
           </button>
         </div>
       </section>
@@ -199,7 +778,6 @@ export default function TakePhotos() {
           font-size: 58px;
           line-height: 1;
           font-weight: 800;
-          letter-spacing: -2px;
         }
 
         .photos-step-divider,
@@ -213,9 +791,12 @@ export default function TakePhotos() {
 
         .photos-step-title h1 {
           margin: 0;
-          font-size: clamp(32px, 4.2vw, 54px);
+          font-size: clamp(
+            32px,
+            4.2vw,
+            54px
+          );
           line-height: 1.05;
-          letter-spacing: -1.8px;
           font-weight: 800;
         }
 
@@ -224,7 +805,9 @@ export default function TakePhotos() {
           padding: 42px 44px 46px;
           border-radius: 34px;
           background: #ffffff;
-          box-shadow: 0 22px 55px rgba(30, 86, 72, 0.11);
+          box-shadow:
+            0 22px 55px
+            rgba(30, 86, 72, 0.11);
           box-sizing: border-box;
         }
 
@@ -232,7 +815,7 @@ export default function TakePhotos() {
           display: flex;
           align-items: center;
           gap: 22px;
-          margin-bottom: 42px;
+          margin-bottom: 30px;
         }
 
         .photos-back {
@@ -254,9 +837,12 @@ export default function TakePhotos() {
 
         .photos-card-header h2 {
           margin: 0;
-          font-size: clamp(30px, 4vw, 50px);
+          font-size: clamp(
+            30px,
+            4vw,
+            50px
+          );
           line-height: 1;
-          letter-spacing: -1.5px;
           font-weight: 800;
         }
 
@@ -265,12 +851,28 @@ export default function TakePhotos() {
           color: #087d59;
           font-size: 43px;
           font-weight: 800;
-          line-height: 1;
+        }
+
+        .photos-camera-help {
+          margin: 0 0 24px;
+          color: #5c726f;
+          font-size: 16px;
+          line-height: 1.5;
+        }
+
+        .photos-camera-error {
+          margin: 0 0 20px;
+          padding: 14px 16px;
+          border-radius: 14px;
+          background: #fff2f0;
+          color: #a33a2b;
+          font-weight: 700;
         }
 
         .photos-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns:
+            repeat(3, minmax(0, 1fr));
           gap: 22px;
         }
 
@@ -295,22 +897,15 @@ export default function TakePhotos() {
           object-fit: cover;
         }
 
-        .photos-upload-tile {
+        .photos-empty-tile {
           border: 2px dashed #b8cfca;
           background: #f2f9f8;
           color: #157d60;
-          cursor: pointer;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
           gap: 14px;
-          font: inherit;
-        }
-
-        .photos-upload-tile:hover {
-          background: #edf7f4;
-          border-color: #66aa97;
         }
 
         .photos-camera-circle {
@@ -324,18 +919,30 @@ export default function TakePhotos() {
           color: #47645f;
         }
 
-        .photos-remove {
+        .photos-empty-tile small {
+          color: #6b7e79;
+          font-size: 13px;
+        }
+
+        .photos-photo-actions {
           position: absolute;
-          top: 12px;
+          left: 12px;
           right: 12px;
-          width: 38px;
-          height: 38px;
+          bottom: 12px;
+          display: flex;
+          justify-content: space-between;
+        }
+
+        .photos-action {
+          width: 40px;
+          height: 40px;
           border: 0;
           border-radius: 50%;
           display: grid;
           place-items: center;
           color: #fff;
-          background: rgba(16, 35, 42, 0.68);
+          background:
+            rgba(16, 35, 42, 0.75);
           cursor: pointer;
         }
 
@@ -344,6 +951,170 @@ export default function TakePhotos() {
           color: #687b86;
           font-size: 15px;
           font-weight: 600;
+        }
+
+        .photos-capture-primary {
+          margin-top: 22px;
+          width: 100%;
+          min-height: 58px;
+          border: 0;
+          border-radius: 16px;
+          background: #087d59;
+          color: white;
+          font: inherit;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          cursor: pointer;
+        }
+
+        .photos-capture-primary:hover:not(:disabled) {
+          background: #066b4d;
+        }
+
+        .photos-capture-primary:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .camera-modal {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          display: grid;
+          place-items: center;
+          padding: 18px;
+          background:
+            rgba(5, 20, 17, 0.88);
+        }
+
+        .camera-panel {
+          width: min(760px, 100%);
+          max-height: 96vh;
+          overflow-y: auto;
+          background: #fff;
+          border-radius: 24px;
+          padding: 16px;
+          box-sizing: border-box;
+        }
+
+        .camera-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 12px;
+        }
+
+        .camera-header > div {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .camera-header strong {
+          font-size: 22px;
+        }
+
+        .camera-header span {
+          color: #6a7c78;
+          font-size: 13px;
+        }
+
+        .camera-header button {
+          width: 42px;
+          height: 42px;
+          border: 0;
+          border-radius: 50%;
+          background: #edf3f1;
+          color: #24443d;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+
+        .camera-preview-wrapper {
+          position: relative;
+          overflow: hidden;
+          border-radius: 18px;
+          background: #111;
+        }
+
+        .camera-video {
+          display: block;
+          width: 100%;
+          aspect-ratio: 4 / 3;
+          object-fit: cover;
+          background: #111;
+        }
+
+        .camera-live-label {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 7px 10px;
+          border-radius: 999px;
+          background:
+            rgba(10, 20, 18, 0.72);
+          color: #fff;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .camera-live-label span {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #ff554b;
+        }
+
+        .camera-photo-count {
+          margin-top: 12px;
+          text-align: center;
+          color: #536964;
+          font-size: 15px;
+          font-weight: 700;
+        }
+
+        .camera-actions {
+          display: flex;
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .camera-capture,
+        .camera-cancel {
+          flex: 1;
+          min-height: 54px;
+          border-radius: 14px;
+          border: 0;
+          font: inherit;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .camera-capture {
+          background: #087d59;
+          color: #fff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .camera-capture:disabled {
+          opacity: 0.6;
+          cursor: wait;
+        }
+
+        .camera-cancel {
+          background: #edf3f1;
+          color: #24443d;
         }
 
         .photos-detail-section {
@@ -401,72 +1172,13 @@ export default function TakePhotos() {
 
         .photos-location-row {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) 190px;
+          grid-template-columns:
+            minmax(0, 1fr);
           gap: 16px;
-          align-items: stretch;
         }
 
         .photos-location-field {
           min-height: 102px;
-        }
-
-        .photos-location-preview {
-          position: relative;
-          min-height: 102px;
-          overflow: hidden;
-          border-radius: 19px;
-          border: 2px solid #dce9e5;
-          background: #eef5e8;
-        }
-
-        .photos-map-road {
-          position: absolute;
-          display: block;
-          width: 145%;
-          height: 12px;
-          background: #fff;
-          transform: rotate(34deg);
-          left: -35px;
-          top: 42px;
-          box-shadow: 0 0 0 2px #e2eadb;
-        }
-
-        .road-two {
-          width: 120%;
-          height: 8px;
-          transform: rotate(-42deg);
-          left: 28px;
-          top: 14px;
-        }
-
-        .photos-map-water {
-          position: absolute;
-          width: 72px;
-          height: 160px;
-          right: 28px;
-          top: -25px;
-          border-radius: 55%;
-          background: #cfe7ef;
-          transform: rotate(23deg);
-          opacity: 0.9;
-        }
-
-        .photos-map-pin {
-          position: absolute;
-          z-index: 2;
-          color: #0b9569;
-          filter: drop-shadow(0 2px 2px rgba(0,0,0,.1));
-        }
-
-        .map-pin-one {
-          left: 44%;
-          top: 23px;
-        }
-
-        .map-pin-two {
-          right: 28px;
-          bottom: 14px;
-          color: #e96b66;
         }
 
         .photos-next {
@@ -485,7 +1197,9 @@ export default function TakePhotos() {
           font-size: 30px;
           font-weight: 800;
           cursor: pointer;
-          box-shadow: 0 10px 24px rgba(17, 155, 109, 0.2);
+          box-shadow:
+            0 10px 24px
+            rgba(17, 155, 109, 0.2);
         }
 
         .photos-next:hover:not(:disabled) {
@@ -496,10 +1210,6 @@ export default function TakePhotos() {
           cursor: not-allowed;
           background: #a9cfc2;
           box-shadow: none;
-        }
-
-        .photos-file-input {
-          display: none;
         }
 
         @media (max-width: 760px) {
@@ -516,7 +1226,6 @@ export default function TakePhotos() {
 
           .photos-step-number {
             font-size: 38px;
-            letter-spacing: -1px;
           }
 
           .photos-step-divider {
@@ -526,7 +1235,6 @@ export default function TakePhotos() {
 
           .photos-step-title h1 {
             font-size: 27px;
-            letter-spacing: -0.8px;
           }
 
           .photos-card {
@@ -545,11 +1253,6 @@ export default function TakePhotos() {
             height: 42px;
           }
 
-          .photos-back :global(svg) {
-            width: 29px;
-            height: 29px;
-          }
-
           .photos-header-divider {
             height: 38px;
             width: 2px;
@@ -557,7 +1260,6 @@ export default function TakePhotos() {
 
           .photos-card-header h2 {
             font-size: 30px;
-            letter-spacing: -0.8px;
           }
 
           .photos-required {
@@ -565,6 +1267,8 @@ export default function TakePhotos() {
           }
 
           .photos-grid {
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr));
             gap: 10px;
           }
 
@@ -577,21 +1281,9 @@ export default function TakePhotos() {
             font-size: 13px;
           }
 
-          .photos-camera-circle :global(svg) {
+          .photos-camera-circle svg {
             width: 31px;
             height: 31px;
-          }
-
-          .photos-remove {
-            top: 7px;
-            right: 7px;
-            width: 30px;
-            height: 30px;
-          }
-
-          .photos-remove :global(svg) {
-            width: 15px;
-            height: 15px;
           }
 
           .photos-detail-section {
@@ -622,16 +1314,8 @@ export default function TakePhotos() {
             font-size: 18px;
           }
 
-          .photos-location-row {
-            grid-template-columns: 1fr;
-          }
-
           .photos-location-field {
             min-height: 68px;
-          }
-
-          .photos-location-preview {
-            min-height: 110px;
           }
 
           .photos-next {
@@ -639,6 +1323,23 @@ export default function TakePhotos() {
             margin-top: 23px;
             border-radius: 17px;
             font-size: 24px;
+          }
+
+          .camera-modal {
+            padding: 8px;
+          }
+
+          .camera-panel {
+            border-radius: 20px;
+            padding: 12px;
+          }
+
+          .camera-video {
+            aspect-ratio: 3 / 4;
+          }
+
+          .camera-actions {
+            flex-direction: column;
           }
         }
 

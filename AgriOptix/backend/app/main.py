@@ -2,11 +2,25 @@ import sys
 import hashlib
 import secrets
 import re
+import os
+import json
+import base64
+import urllib.request
+import urllib.error
+import uuid
 from pathlib import Path
 from typing import Optional, List, Literal
 from datetime import datetime
 
+<<<<<<< HEAD
 from fastapi import FastAPI, HTTPException, Depends
+=======
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+from fastapi import FastAPI, HTTPException
+>>>>>>> c225290e48cf02fd0d23efa2e0612d5932774aab
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -65,6 +79,7 @@ DEMO_HARVEST = {
 
 FARMERS: List[dict] = []
 HARVESTS: List[dict] = []
+AI_QUALITY_RESULTS: dict[int, dict] = {}
 NEXT_HARVEST_ID = 1
 
 DRIVERS: List[dict] = []
@@ -746,10 +761,32 @@ def driver_dashboard(driver_id: int):
 
 @app.get("/api/harvests")
 def harvests():
-    published = [h for h in HARVESTS if h.get("status") in {"PUBLISHED", "AVAILABLE"}]
-    if published:
-        return list(reversed(published))
-    return [DEMO_HARVEST]
+    published = [
+        h for h in HARVESTS
+        if h.get("status") in {"PUBLISHED", "AVAILABLE"}
+    ]
+    rows = list(reversed(published))
+    if not rows:
+        return []
+
+    for row in rows:
+        row["ai_quality_analysis"] = AI_QUALITY_RESULTS.get(
+            row["id"], row.get("ai_quality_analysis")
+        )
+    return rows
+
+
+@app.get("/api/harvests/{harvest_id}")
+def get_harvest(harvest_id: int):
+    harvest = next((h for h in HARVESTS if h.get("id") == harvest_id), None)
+    if not harvest:
+        raise HTTPException(status_code=404, detail="Harvest not found.")
+
+    result = dict(harvest)
+    result["ai_quality_analysis"] = AI_QUALITY_RESULTS.get(
+        harvest_id, harvest.get("ai_quality_analysis")
+    )
+    return result
 
 
 @app.post("/api/harvests")
@@ -776,12 +813,10 @@ def create_harvest(data: HarvestIn):
             "pickup_time": data.pickup_time,
             "loading_assistance": data.loading_assistance,
         }
-
         missing = [
             name for name, value in required.items()
             if value is None or value == ""
         ]
-
         if missing:
             raise HTTPException(
                 status_code=422,
@@ -789,19 +824,18 @@ def create_harvest(data: HarvestIn):
             )
 
     quantity_kg = data.quantity or 0
-
     if data.quantity_unit == "quintal":
         quantity_kg = data.quantity * 100
     elif data.quantity_unit == "tonne":
         quantity_kg = data.quantity * 1000
 
     record = data.model_dump()
-
     record.update({
         "id": NEXT_HARVEST_ID,
         "quantity_kg": quantity_kg,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "updated_at": datetime.utcnow().isoformat() + "Z",
+        "ai_quality_analysis": None,
     })
 
     HARVESTS.append(record)
@@ -820,32 +854,267 @@ def create_harvest(data: HarvestIn):
 
     return record
 
+
 # ============================================================
-# QUALITY ANALYSIS - DEMO
+# REAL IMAGE-BASED QUALITY ANALYSIS
 # ============================================================
+
+QUALITY_FIELDS = [
+    "crop_name",
+    "overall_quality",
+    "visible_damage",
+    "ripeness_maturity",
+    "size",
+    "freshness_condition",
+    "estimated_shelf_life",
+]
+
+
+def _extract_json(text: str) -> dict:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        cleaned = cleaned.rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(cleaned[start:end + 1])
+        raise
+
+
+def _image_payload(image: str) -> tuple[str, bytes]:
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        raise ValueError("Each photo must be a base64 data URL produced by the camera.")
+
+    try:
+        header, encoded = image.split(",", 1)
+        mime = header.split(";", 1)[0].replace("data:", "").lower()
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise ValueError("One of the captured photos is invalid.") from exc
+
+    if mime not in {"image/jpeg", "image/png", "image/webp"}:
+        raise ValueError("Unsupported image format. Use JPEG, PNG, or WebP.")
+    if not raw:
+        raise ValueError("One of the captured photos is empty.")
+    if len(raw) > 12 * 1024 * 1024:
+        raise ValueError("A captured photo is too large. Please retake it.")
+
+    return mime, raw
+
+
+def _analyze_with_openrouter(images: List[str], crop_hint: Optional[str], request_id: str) -> dict:
+    """Send the actual camera-captured image data to OpenRouter using a vision model."""
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+
+    base_url = os.getenv(
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1",
+    ).strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("OPENROUTER_BASE_URL is not configured.")
+    if not base_url.endswith("/chat/completions"):
+        base_url = f"{base_url}/chat/completions"
+
+    model = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-2.5-flash").strip()
+    if not model:
+        raise RuntimeError("OPENROUTER_VISION_MODEL is not configured.")
+
+    content = [{
+        "type": "text",
+        "text": (
+            "Analyze the ACTUAL camera-captured produce photographs attached to this request. "
+            "Inspect every supplied image and compare all views together. The images are the "
+            "source of truth. Do not return a canned/default result and do not infer a property "
+            "that is not visually supported. Examine crop identity, color, maturity/ripeness, "
+            "bruising, discoloration, mold-like visible areas, cuts, cracks, rot-like damage, "
+            "insect damage when visually identifiable, deformation, apparent size, and freshness. "
+            "Estimated shelf life must be a cautious visual estimate, never a laboratory guarantee. "
+            "If something cannot be determined from the photographs, say 'Not determinable from image'. "
+            "Return ONLY one valid JSON object with exactly these fields: "
+            "crop_name, overall_quality, visible_damage, ripeness_maturity, size, "
+            "freshness_condition, estimated_shelf_life, confidence. "
+            "confidence must be a number from 0 to 100. Do not wrap the JSON in markdown. "
+            f"Farmer crop hint: {crop_hint or 'unknown'}."
+        ),
+    }]
+
+    hashes = []
+    mime_sizes = []
+    for image in images:
+        mime, raw = _image_payload(image)
+        digest = hashlib.sha256(raw).hexdigest()
+        hashes.append(digest)
+        mime_sizes.append(len(raw))
+
+        # Send the exact captured JPEG/PNG/WebP bytes as a data URL. This avoids
+        # relying on a local filesystem path or an inaccessible localhost URL.
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": image},
+        })
+
+    print(
+        f"[quality:{request_id}] provider=openrouter model={model} "
+        f"images={len(images)} mime_sizes={mime_sizes} "
+        f"unique_images={len(set(hashes))}"
+    )
+
+    body = json.dumps({
+        "model": model,
+        "max_tokens": 12000,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a careful produce-quality vision analyst. "
+                    "You must inspect the supplied images and base every field on visible evidence. "
+                    "Never substitute a default or demo answer."
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        base_url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "AgriOptix",
+        },
+    )
+
+    print(f"[quality:{request_id}] openrouter_request_started max_tokens=12000")
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        provider_body = exc.read().decode("utf-8", errors="replace")[:1200]
+        print(
+            f"[quality:{request_id}] openrouter_http_error "
+            f"status={exc.code} body={provider_body}"
+        )
+        raise RuntimeError(f"AI provider returned HTTP {exc.code}.") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        print(
+            f"[quality:{request_id}] openrouter_network_error "
+            f"type={type(exc).__name__}"
+        )
+        raise RuntimeError("AI vision service request failed.") from exc
+
+    print(f"[quality:{request_id}] openrouter_response_received")
+    try:
+        choice = payload["choices"][0]
+        message = choice["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        print(f"[quality:{request_id}] invalid_provider_response")
+        raise RuntimeError("AI provider returned an unexpected response.") from exc
+
+    if isinstance(message, list):
+        parts = []
+        for part in message:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if text:
+                    parts.append(str(text))
+        message = "".join(parts)
+
+    if not isinstance(message, str) or not message.strip():
+        raise RuntimeError("AI provider returned an empty response.")
+
+    result = _extract_json(message)
+    print(f"[quality:{request_id}] response_parsed=true")
+    return result
+
+
+# Backward-compatible internal name: the route calls this helper, but the
+# implementation now uses OpenRouter rather than the exhausted OpenAI quota.
+def _analyze_with_openai(images: List[str], crop_hint: Optional[str], request_id: str) -> dict:
+    return _analyze_with_openrouter(images, crop_hint, request_id)
+
 
 @app.post("/api/quality/analyze")
-def quality():
+def quality_analyze(data: dict):
+    request_id = uuid.uuid4().hex[:12]
+    images = data.get("images") or []
 
-    return {
-        "crop_detected": DEMO_HARVEST["crop"],
+    print(f"[quality:{request_id}] request_received images={len(images)}")
 
-        "grade": "A",
+    if not 2 <= len(images) <= 4:
+        raise HTTPException(
+            status_code=422,
+            detail="Capture 2–4 produce photos before starting AI analysis.",
+        )
 
-        "confidence": 92,
+    try:
+        image_hashes = []
+        for image in images:
+            _, raw = _image_payload(image)
+            image_hashes.append(hashlib.sha256(raw).hexdigest())
 
-        "quality_score": 88,
+        if len(set(image_hashes)) != len(image_hashes):
+            raise ValueError("Duplicate photo content detected. Capture different views of the produce.")
 
-        "visible_defects": "Low",
+        raw = _analyze_with_openai(
+            images,
+            data.get("crop"),
+            request_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RuntimeError, KeyError, json.JSONDecodeError) as exc:
+        print(f"[quality:{request_id}] analysis_failed type={type(exc).__name__}")
+        raise HTTPException(
+            status_code=503,
+            detail="AI quality analysis failed. Please try again.",
+        ) from exc
 
-        "indicators": [
-            "Good color",
-            "Uniform appearance",
-            "Low visible defect level",
-        ],
+    if any(key not in raw for key in QUALITY_FIELDS):
+        print(f"[quality:{request_id}] invalid_response_missing_fields")
+        raise HTTPException(
+            status_code=502,
+            detail="AI quality analysis returned an invalid response. Please try again.",
+        )
 
-        "mode": "DEMO",
+    try:
+        confidence = float(raw.get("confidence"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="AI quality analysis returned an invalid confidence value. Please try again.",
+        ) from exc
+
+    result = {
+        key: str(raw[key]).strip()
+        for key in QUALITY_FIELDS
     }
+    result["confidence"] = max(0, min(100, confidence))
+    result["analyzed_at"] = datetime.utcnow().isoformat() + "Z"
+    result["request_id"] = request_id
+    result["disclaimer"] = "AI-generated visual assessment — not laboratory verified."
+
+    harvest_id = data.get("harvest_id")
+    if isinstance(harvest_id, int):
+        harvest = next((h for h in HARVESTS if h.get("id") == harvest_id), None)
+        if harvest:
+            AI_QUALITY_RESULTS[harvest_id] = result
+            harvest["ai_quality_analysis"] = result
+            harvest["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            print(f"[quality:{request_id}] saved_to_harvest={harvest_id}")
+
+    return result
 
 
 # ============================================================
