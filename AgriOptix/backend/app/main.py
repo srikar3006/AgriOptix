@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import Optional, List, Literal
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-
-
+from app.database.database import get_db
+from app.models import Driver
 # ============================================================
 # PROJECT PATH
 # ============================================================
@@ -437,9 +438,15 @@ def login(data: LoginIn):
 # DRIVER REGISTRATION
 # ============================================================
 
-@app.post("/api/drivers/register")
-def register_driver(data: DriverIn):
+# ============================================================
+# DRIVER REGISTRATION - DATABASE
+# ============================================================
 
+@app.post("/api/drivers/register")
+def register_driver(
+    data: DriverIn,
+    db: Session = Depends(get_db),
+):
     # --------------------------------------------------------
     # BASIC VALIDATION
     # --------------------------------------------------------
@@ -450,9 +457,7 @@ def register_driver(data: DriverIn):
             detail="Full name is required.",
         )
 
-    mobile = validate_mobile(
-        data.mobileNumber
-    )
+    mobile = validate_mobile(data.mobileNumber)
 
     vehicle_number = normalize_vehicle_number(
         data.vehicleNumber
@@ -464,18 +469,19 @@ def register_driver(data: DriverIn):
             detail="Vehicle number is required.",
         )
 
-    validate_password(
-        data.password
-    )
+    validate_password(data.password)
 
     # --------------------------------------------------------
     # DUPLICATE MOBILE CHECK
     # --------------------------------------------------------
 
-    if any(
-        driver.get("mobileNumber") == mobile
-        for driver in DRIVERS
-    ):
+    existing_mobile = (
+        db.query(Driver)
+        .filter(Driver.mobile_number == mobile)
+        .first()
+    )
+
+    if existing_mobile:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -488,19 +494,20 @@ def register_driver(data: DriverIn):
     # DUPLICATE VEHICLE CHECK
     # --------------------------------------------------------
 
-    if any(
-        driver.get("vehicleNumber") == vehicle_number
-        for driver in DRIVERS
-    ):
+    existing_vehicle = (
+        db.query(Driver)
+        .filter(Driver.vehicle_number == vehicle_number)
+        .first()
+    )
+
+    if existing_vehicle:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This vehicle number is already registered."
-            ),
+            detail="This vehicle number is already registered.",
         )
 
     # --------------------------------------------------------
-    # HASH DRIVER PASSWORD
+    # HASH PASSWORD
     # --------------------------------------------------------
 
     password_hash, password_salt = hash_password(
@@ -508,83 +515,79 @@ def register_driver(data: DriverIn):
     )
 
     # --------------------------------------------------------
-    # CREATE DRIVER
+    # CREATE DATABASE DRIVER
     # --------------------------------------------------------
 
-    driver = {
-        "id": len(DRIVERS) + 1,
-
-        "fullName": data.fullName.strip(),
-
-        "mobileNumber": mobile,
-
-        "preferredLanguage": (
-            data.preferredLanguage
-            or "English"
+    driver = Driver(
+        full_name=data.fullName.strip(),
+        mobile_number=mobile,
+        preferred_language=(
+            data.preferredLanguage or "English"
         ),
-
-        "currentLocation": (
-            data.currentLocation
-            or ""
+        current_location=(
+            data.currentLocation or ""
         ),
-
-        "vehicleType": (
-            data.vehicleType
-            or ""
+        vehicle_type=(
+            data.vehicleType or ""
         ),
-
-        "vehicleNumber": vehicle_number,
-
-        "drivingLicenseNumber": (
-            data.drivingLicenseNumber
-            or ""
+        vehicle_number=vehicle_number,
+        driving_license_number=(
+            data.drivingLicenseNumber or ""
         ),
-
-        "licenseExpiryDate": (
+        license_expiry_date=(
             data.licenseExpiryDate
-            or ""
+            if data.licenseExpiryDate
+            else None
         ),
-
-        "vehicleCapacity": (
-            data.vehicleCapacity
-            or ""
+        vehicle_capacity=(
+            data.vehicleCapacity or ""
         ),
-
-        "experience": (
-            data.experience
-            or ""
+        experience=(
+            data.experience or ""
         ),
-
-        "availability": (
-            data.availability
-            or ""
+        availability=(
+            data.availability or ""
         ),
-
-        "preferredRoutes": (
-            data.preferredRoutes
-            or ""
+        preferred_routes=(
+            data.preferredRoutes or ""
         ),
+        password_hash=password_hash,
+        password_salt=password_salt,
+        status="ACTIVE",
+    )
 
-        "password_hash": password_hash,
+    db.add(driver)
+    db.commit()
+    db.refresh(driver)
 
-        "password_salt": password_salt,
-
-        "status": "ACTIVE",
-
-        "mode": "DEMO",
-    }
-
-    DRIVERS.append(driver)
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
 
     return {
         "message": "Driver registration successful",
-
-        "driver": safe_driver(
-            driver
-        ),
+        "driver": {
+            "id": driver.id,
+            "fullName": driver.full_name,
+            "mobileNumber": driver.mobile_number,
+            "preferredLanguage": driver.preferred_language,
+            "currentLocation": driver.current_location,
+            "vehicleType": driver.vehicle_type,
+            "vehicleNumber": driver.vehicle_number,
+            "drivingLicenseNumber": driver.driving_license_number,
+            "licenseExpiryDate": (
+                driver.license_expiry_date.isoformat()
+                if driver.license_expiry_date
+                else ""
+            ),
+            "vehicleCapacity": driver.vehicle_capacity,
+            "experience": driver.experience,
+            "availability": driver.availability,
+            "preferredRoutes": driver.preferred_routes,
+            "status": driver.status,
+            "mode": "DATABASE",
+        },
     }
-
-
 # ============================================================
 # DRIVER LOGIN
 # ============================================================
