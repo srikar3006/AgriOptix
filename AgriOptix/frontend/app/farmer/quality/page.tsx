@@ -16,6 +16,7 @@ type QualityResult = {
   confidence: number;
   disclaimer?: string;
   request_id?: string;
+  harvest_id?: number;
 };
 
 export default function AIQuality() {
@@ -53,10 +54,19 @@ export default function AIQuality() {
           images: wf.photos,
           crop: wf.harvest?.crop || null,
           harvest_id: wf.harvest?.id || null,
+          harvest: wf.harvest || null,
         }),
       });
-      setQuality(result as QualityResult);
-      setWf({ aiQuality: result });
+      const qualityResult = result as QualityResult;
+      setQuality(qualityResult);
+      if (qualityResult.harvest_id) {
+        setWf({
+          aiQuality: qualityResult,
+          harvest: { ...(wf.harvest || {}), id: qualityResult.harvest_id },
+        });
+      } else {
+        setWf({ aiQuality: qualityResult });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI quality analysis failed. Please try again.");
     } finally {

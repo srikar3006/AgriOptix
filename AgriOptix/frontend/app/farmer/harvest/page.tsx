@@ -1,5 +1,3 @@
-
-
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -116,7 +114,10 @@ export default function Perishability() {
           method: "POST",
           cache: "no-store",
           headers: { "Cache-Control": "no-store" },
-          body: JSON.stringify({ harvest_id: currentHarvest.id }),
+          body: JSON.stringify({
+            harvest_id: currentHarvest.id,
+            timezone_offset_minutes: new Date().getTimezoneOffset(),
+          }),
         });
 
         if (!active) return;
@@ -357,3 +358,7 @@ export default function Perishability() {
         .perishability-decor{position:absolute;z-index:1;left:0;right:0;bottom:-12px;height:210px;pointer-events:none;overflow:hidden;color:#39ac79}.decor-leaf{position:absolute;opacity:.75}.decor-leaf-left-a{left:-16px;bottom:4px;transform:rotate(-35deg)}.decor-leaf-left-b{left:45px;bottom:-3px;transform:rotate(-8deg)}.decor-leaf-left-c{left:95px;bottom:-12px;transform:rotate(26deg)}.decor-leaf-right-a{right:-12px;bottom:4px;transform:rotate(34deg) scaleX(-1)}.decor-leaf-right-b{right:48px;bottom:-6px;transform:rotate(8deg) scaleX(-1)}
         @media(max-width:800px){.perishability-header{height:68px;padding:0 18px}.perishability-brand-text{font-size:23px}.perishability-main{padding:20px 18px 80px}.perishability-grid{grid-template-columns:1fr}.perishability-hero-row{gap:14px}.shelf-life-badge,.ai-range-card{width:100%}.perishability-meta{justify-content:flex-start}.perishability-actions{margin-top:24px}}
         @media(max-width:600px){.perishability-header{height:62px;padding:0 13px;border-radius:0 0 17px 17px}.perishability-brand-mark{width:40px;height:40px}.perishability-brand-text{font-size:20px}.perishability-header-actions{gap:9px}.perishability-avatar{width:36px;height:36px}.perishability-main{min-height:calc(100vh - 62px);padding:15px 12px 74px}.perishability-back{font-size:16px}.perishability-back svg{width:22px;height:22px}.title-block{margin-bottom:22px}.perishability-top h1{font-size:25px}.perishability-hero-row{flex-direction:column;gap:11px}.shelf-life-badge{min-height:74px}.shelf-life-badge strong{font-size:31px}.ai-range-card{min-height:75px}.perishability-meta{font-size:12px;gap:7px 12px;margin-bottom:22px}.perishability-alert{padding:11px;gap:10px}.perishability-alert p{font-size:13px}.perishability-alert-icon{width:31px;height:31px}.perishability-grid{gap:12px}.perishability-left{gap:12px}.perishability-timeline{padding:11px 6px 9px;gap:3px}.perishability-stage small{font-size:10px}.perishability-stage b{font-size:11px}.stage-line{height:8px}.perishability-info{padding:13px}.perishability-info p{font-size:13px}.value-number{font-size:26px!important}.perishability-continue{width:100%;min-height:53px;font-size:19px}.perishability-decor{height:125px}}
+`}</style>
+    </div>
+  );
+}
