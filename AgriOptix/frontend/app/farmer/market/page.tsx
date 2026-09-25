@@ -125,7 +125,7 @@ export default function MarketIntelligence() {
             <span>Demand: High</span>
           </div>
 
-          <button className="market-compare" onClick={() => router.push("/farmer/buyers")} type="button">
+          <button className="market-compare" onClick={() => router.push("/farmer/buyers/produce")} type="button">
             <Scale size={27} strokeWidth={1.8} />
             <span>Compare Buyers</span>
             <ArrowRight size={28} strokeWidth={2} />
