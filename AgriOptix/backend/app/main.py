@@ -596,20 +596,20 @@ def register_driver(
 # DRIVER LOGIN
 # ============================================================
 
-@app.post("/api/drivers/login")
-def login_driver(data: LoginIn):
 
+@app.post("/api/drivers/login")
+def login_driver(
+    data: LoginIn,
+    db: Session = Depends(get_db),
+):
     mobile = validate_mobile(
         data.identifier
     )
 
-    driver = next(
-        (
-            driver
-            for driver in DRIVERS
-            if driver.get("mobileNumber") == mobile
-        ),
-        None,
+    driver = (
+        db.query(Driver)
+        .filter(Driver.mobile_number == mobile)
+        .first()
     )
 
     if not driver:
@@ -620,8 +620,8 @@ def login_driver(data: LoginIn):
 
     if not verify_password(
         data.password,
-        driver["password_hash"],
-        driver["password_salt"],
+        driver.password_hash,
+        driver.password_salt,
     ):
         raise HTTPException(
             status_code=401,
@@ -632,27 +632,22 @@ def login_driver(data: LoginIn):
         "message": "Driver login successful",
 
         "driver": {
-            "id": driver["id"],
-            "fullName": driver["fullName"],
-            "mobileNumber": driver["mobileNumber"],
-            "vehicleNumber": driver["vehicleNumber"],
-            "vehicleType": driver["vehicleType"],
-            "preferredLanguage": driver[
-                "preferredLanguage"
-            ],
-            "currentLocation": driver[
-                "currentLocation"
-            ],
-            "status": driver["status"],
+            "id": driver.id,
+            "fullName": driver.full_name,
+            "mobileNumber": driver.mobile_number,
+            "vehicleNumber": driver.vehicle_number,
+            "vehicleType": driver.vehicle_type,
+            "preferredLanguage": driver.preferred_language,
+            "currentLocation": driver.current_location,
+            "status": driver.status,
         },
 
         "access_token": (
-            f"demo-driver-token-{driver['id']}"
+            f"demo-driver-token-{driver.id}"
         ),
 
         "token_type": "bearer",
     }
-
 
 # ============================================================
 # DRIVER LIST
@@ -668,19 +663,57 @@ def get_drivers():
 
 
 # ============================================================
-# DRIVER PROFILE
+# DRIVER LIST - DATABASE
+# ============================================================
+
+@app.get("/api/drivers")
+def get_drivers(
+    db: Session = Depends(get_db),
+):
+    drivers = (
+        db.query(Driver)
+        .order_by(Driver.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": driver.id,
+            "fullName": driver.full_name,
+            "mobileNumber": driver.mobile_number,
+            "preferredLanguage": driver.preferred_language,
+            "currentLocation": driver.current_location,
+            "vehicleType": driver.vehicle_type,
+            "vehicleNumber": driver.vehicle_number,
+            "drivingLicenseNumber": driver.driving_license_number,
+            "licenseExpiryDate": (
+                driver.license_expiry_date.isoformat()
+                if driver.license_expiry_date
+                else ""
+            ),
+            "vehicleCapacity": driver.vehicle_capacity,
+            "experience": driver.experience,
+            "availability": driver.availability,
+            "preferredRoutes": driver.preferred_routes,
+            "status": driver.status,
+        }
+        for driver in drivers
+    ]
+
+
+# ============================================================
+# DRIVER PROFILE - DATABASE
 # ============================================================
 
 @app.get("/api/drivers/{driver_id}")
-def get_driver(driver_id: int):
-
-    driver = next(
-        (
-            driver
-            for driver in DRIVERS
-            if driver.get("id") == driver_id
-        ),
-        None,
+def get_driver(
+    driver_id: int,
+    db: Session = Depends(get_db),
+):
+    driver = (
+        db.query(Driver)
+        .filter(Driver.id == driver_id)
+        .first()
     )
 
     if not driver:
@@ -690,24 +723,42 @@ def get_driver(driver_id: int):
         )
 
     return {
-        "driver": safe_driver(driver)
+        "driver": {
+            "id": driver.id,
+            "fullName": driver.full_name,
+            "mobileNumber": driver.mobile_number,
+            "preferredLanguage": driver.preferred_language,
+            "currentLocation": driver.current_location,
+            "vehicleType": driver.vehicle_type,
+            "vehicleNumber": driver.vehicle_number,
+            "drivingLicenseNumber": driver.driving_license_number,
+            "licenseExpiryDate": (
+                driver.license_expiry_date.isoformat()
+                if driver.license_expiry_date
+                else ""
+            ),
+            "vehicleCapacity": driver.vehicle_capacity,
+            "experience": driver.experience,
+            "availability": driver.availability,
+            "preferredRoutes": driver.preferred_routes,
+            "status": driver.status,
+        }
     }
 
 
 # ============================================================
-# DRIVER DASHBOARD
+# DRIVER DASHBOARD - DATABASE
 # ============================================================
 
 @app.get("/api/drivers/{driver_id}/dashboard")
-def driver_dashboard(driver_id: int):
-
-    driver = next(
-        (
-            driver
-            for driver in DRIVERS
-            if driver.get("id") == driver_id
-        ),
-        None,
+def driver_dashboard(
+    driver_id: int,
+    db: Session = Depends(get_db),
+):
+    driver = (
+        db.query(Driver)
+        .filter(Driver.id == driver_id)
+        .first()
     )
 
     if not driver:
@@ -716,8 +767,29 @@ def driver_dashboard(driver_id: int):
             detail="Driver not found.",
         )
 
+    driver_data = {
+        "id": driver.id,
+        "fullName": driver.full_name,
+        "mobileNumber": driver.mobile_number,
+        "preferredLanguage": driver.preferred_language,
+        "currentLocation": driver.current_location,
+        "vehicleType": driver.vehicle_type,
+        "vehicleNumber": driver.vehicle_number,
+        "drivingLicenseNumber": driver.driving_license_number,
+        "licenseExpiryDate": (
+            driver.license_expiry_date.isoformat()
+            if driver.license_expiry_date
+            else ""
+        ),
+        "vehicleCapacity": driver.vehicle_capacity,
+        "experience": driver.experience,
+        "availability": driver.availability,
+        "preferredRoutes": driver.preferred_routes,
+        "status": driver.status,
+    }
+
     return {
-        "driver": safe_driver(driver),
+        "driver": driver_data,
 
         "stats": {
             "active_trips": 0,
@@ -744,6 +816,13 @@ def driver_dashboard(driver_id: int):
 
         "mode": "DEMO",
     }
+
+
+# ============================================================
+# HARVEST
+# ============================================================
+
+    
 # ============================================================
 # HARVEST
 # ============================================================
