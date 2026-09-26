@@ -1,5 +1,4 @@
-
-
+"use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import StepShell from "../../../components/StepShell";
@@ -34,19 +33,19 @@ export default function AvailableProduce() {
               <div className="buyer-top"><b>{harvest.crop || "Produce"}</b><span>{harvest.quantity_kg ?? harvest.quantity} kg available</span></div>
 
               <section className="quality-section">
-                <h3>👨‍🌾 FARMER REPORTED QUALITY</h3>
+                <h3>ðŸ‘¨â€ðŸŒ¾ FARMER REPORTED QUALITY</h3>
                 <div className="quality-grid">
-                  <span>Overall: <b>{farmer.overall_quality || "—"}</b></span>
-                  <span>Ripeness: <b>{farmer.ripeness || "—"}</b></span>
-                  <span>Visible Damage: <b>{farmer.visible_damage || "—"}</b></span>
-                  <span>Size: <b>{farmer.size || "—"}</b></span>
-                  <span>Freshness: <b>{farmer.freshness || "—"}</b></span>
-                  <span>Shelf Life: <b>{farmer.estimated_shelf_life || "—"}</b></span>
+                  <span>Overall: <b>{farmer.overall_quality || "â€”"}</b></span>
+                  <span>Ripeness: <b>{farmer.ripeness || "â€”"}</b></span>
+                  <span>Visible Damage: <b>{farmer.visible_damage || "â€”"}</b></span>
+                  <span>Size: <b>{farmer.size || "â€”"}</b></span>
+                  <span>Freshness: <b>{farmer.freshness || "â€”"}</b></span>
+                  <span>Shelf Life: <b>{farmer.estimated_shelf_life || "â€”"}</b></span>
                 </div>
               </section>
 
               <section className="quality-section ai-section">
-                <h3>🤖 AI QUALITY ANALYSIS</h3>
+                <h3>ðŸ¤– AI QUALITY ANALYSIS</h3>
                 {ai ? (
                   <>
                     <div className="quality-grid">
@@ -64,7 +63,7 @@ export default function AvailableProduce() {
                         {harvest.photos.slice(0, 4).map((photo: string, index: number) => <img key={`${harvest.id}-${index}`} src={photo} alt={`Captured produce ${index + 1}`} />)}
                       </div>
                     ) : null}
-                    <p className="disclaimer">{ai.disclaimer || "AI-generated visual assessment — not laboratory verified."}</p>
+                    <p className="disclaimer">{ai.disclaimer || "AI-generated visual assessment â€” not laboratory verified."}</p>
                   </>
                 ) : (
                   <p className="not-analyzed">AI analysis has not been completed for this harvest yet.</p>

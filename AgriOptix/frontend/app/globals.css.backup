@@ -1,4 +1,3 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Caveat:wght@600;700&display=swap');
 *{box-sizing:border-box} body{margin:0;background:#f5f7f3;color:#172019;font-family:"DM Sans",sans-serif}button,input{font:inherit}
 .shell{min-height:100vh;display:flex}.sidebar{width:255px;background:#11251a;color:#eaf5ed;padding:26px 18px;display:flex;flex-direction:column;position:fixed;inset:0 auto 0 0}.brand{display:flex;gap:11px;align-items:center;margin:0 8px 45px}.brandmark{width:40px;height:40px;border-radius:12px;background:#c8f06c;color:#102217;display:grid;place-items:center}.brand b{display:block;font:800 19px Manrope}.brand small{display:block;color:#91a69a;font-size:10px;margin-top:2px}nav{display:grid;gap:7px}nav button{border:0;background:transparent;color:#9dafA3;padding:12px 13px;border-radius:10px;text-align:left;display:flex;align-items:center;gap:12px;cursor:pointer}nav button.active,nav button:hover{background:#23412e;color:white}.demo-note{margin-top:auto;background:#1b3324;border:1px solid #31533b;border-radius:12px;padding:12px;display:flex;gap:9px;color:#c8f06c}.demo-note b{display:block;font-size:10px}.demo-note span{display:block;color:#9cafA2;font-size:9px;margin-top:3px;line-height:1.4}
@@ -363,7 +362,7 @@ button {
    in the lower-left area.
 
    These coordinates are based on the complete
-   1536 Ã— 1024 style composition.
+   1536 × 1024 style composition.
 ========================================================= */
 
 .click-get-started {

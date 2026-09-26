@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
   Bell,
   CalendarDays,
+  CheckCircle2,
   Leaf,
   MapPin,
   Scale,
@@ -15,136 +16,430 @@ import {
 } from "lucide-react";
 import { useWorkflow, api } from "../../../lib/store";
 
+type Buyer = {
+  id?: string | number;
+  name?: string;
+  price?: number | string;
+  quantity?: number | string;
+  distance?: number | string;
+  reliability?: number | string;
+  pickup?: string;
+};
+
+function normalizeBuyers(data: unknown): Buyer[] {
+  if (Array.isArray(data)) {
+    return data as Buyer[];
+  }
+
+  if (
+    data &&
+    typeof data === "object"
+  ) {
+    const value = data as {
+      buyers?: unknown;
+      markets?: unknown;
+      data?: unknown;
+    };
+
+    if (Array.isArray(value.buyers)) {
+      return value.buyers as Buyer[];
+    }
+
+    if (Array.isArray(value.markets)) {
+      return value.markets as Buyer[];
+    }
+
+    if (Array.isArray(value.data)) {
+      return value.data as Buyer[];
+    }
+  }
+
+  return [];
+}
+
 export default function MarketIntelligence() {
   const router = useRouter();
   const { wf, setWf } = useWorkflow();
-  const [buyers, setBuyers] = useState<any[]>(wf.buyers?.length ? wf.buyers : []);
+
+  const [buyers, setBuyers] = useState<Buyer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState(false);
 
   useEffect(() => {
-    if (wf.buyers?.length) return;
-    api("/api/markets").then((b) => {
-      setBuyers(b);
-      setWf({ buyers: b });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const storedBuyers = Array.isArray(wf.buyers)
+      ? wf.buyers
+      : [];
 
-  const crop = wf.harvest?.crop || "Tomato";
-  const prices = buyers.map((b) => Number(b.price)).filter((p) => Number.isFinite(p));
-  const min = prices.length ? Math.min(...prices) : 24;
-  const max = prices.length ? Math.max(...prices) : 28;
-  const changePct = wf.market?.changePct ?? 2;
-  const updated = wf.market?.updated || "Today";
-  const marketName = wf.market?.location || wf.harvest?.market || "Nizamabad";
-  const trendLabel = wf.market?.trend || "Stable trend";
+    if (storedBuyers.length > 0) {
+      setBuyers(storedBuyers);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadMarketData() {
+      setLoading(true);
+      setApiError(false);
+
+      try {
+        const response = await api("/api/markets");
+
+        if (cancelled) return;
+
+        const normalized = normalizeBuyers(response);
+
+        setBuyers(normalized);
+
+        if (normalized.length > 0) {
+          setWf({
+            buyers: normalized,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setApiError(true);
+          setBuyers([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadMarketData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [wf.buyers, setWf]);
+
+  const crop =
+    wf.harvest?.crop ||
+    wf.crop ||
+    "Tomato";
+
+  const marketLocation =
+    wf.market?.location ||
+    wf.harvest?.market ||
+    "Nizamabad";
+
+  const updated =
+    wf.market?.updated ||
+    "Today";
+
+  const trend =
+    wf.market?.trend ||
+    "Stable trend";
+
+  const changePct =
+    Number(wf.market?.changePct) || 2;
+
+  const prices = useMemo(() => {
+    return buyers
+      .map((buyer) => Number(buyer.price))
+      .filter(
+        (price) =>
+          Number.isFinite(price) &&
+          price > 0
+      );
+  }, [buyers]);
+
+  const minPrice = prices.length
+    ? Math.min(...prices)
+    : 24;
+
+  const maxPrice = prices.length
+    ? Math.max(...prices)
+    : 28;
+
+  const buyerCount =
+    buyers.length > 0
+      ? buyers.length
+      : loading
+        ? "..."
+        : "Multiple";
+
+  function handleBack() {
+    router.push("/farmer/perishability");
+  }
+
+  function handleCompareBuyers() {
+    router.push("/farmer/buyers/produce");
+  }
 
   return (
     <div className="market-page">
       <header className="market-header">
         <div className="market-brand">
           <div className="market-brand-mark">
-            <Leaf size={29} strokeWidth={2.3} />
+            <Leaf
+              size={24}
+              strokeWidth={2.2}
+            />
           </div>
-          <span>AgriOptix</span>
+
+          <div className="market-brand-copy">
+            <strong>AgriOptix</strong>
+            <span>Farm Intelligence</span>
+          </div>
         </div>
 
-        <div className="market-header-actions" aria-label="Header actions">
-          <button className="market-icon-button" aria-label="Notifications" type="button">
-            <Bell size={27} strokeWidth={1.8} />
+        <div className="market-header-actions">
+          <button
+            type="button"
+            className="market-icon-button"
+            aria-label="Notifications"
+          >
+            <Bell
+              size={21}
+              strokeWidth={1.8}
+            />
           </button>
-          <button className="market-profile" aria-label="Profile" type="button">
-            <UserCircle size={42} strokeWidth={1.7} />
+
+          <button
+            type="button"
+            className="market-profile"
+            aria-label="Farmer profile"
+          >
+            <UserCircle
+              size={35}
+              strokeWidth={1.7}
+            />
           </button>
         </div>
       </header>
 
       <main className="market-main">
         <section className="market-panel">
-          <button className="market-back" onClick={() => router.push("/farmer/perishability")} type="button">
-            <ArrowLeft size={25} strokeWidth={2.2} />
+          <button
+            type="button"
+            className="market-back"
+            onClick={handleBack}
+          >
+            <ArrowLeft
+              size={19}
+              strokeWidth={2.2}
+            />
             <span>Back</span>
           </button>
 
-          <div className="market-eyebrow">MARKET INTELLIGENCE</div>
-          <h1>Market Overview</h1>
+          <div className="market-title-area">
+            <div className="market-eyebrow">
+              MARKET INTELLIGENCE
+            </div>
 
-          <div className="market-summary">
-            <div className="market-crop-block">
-              <div className="market-crop-image" aria-hidden="true">
+            <h1>Market Overview</h1>
+
+            <p>
+              Review the current market before
+              choosing where to sell your harvest.
+            </p>
+          </div>
+
+          <section className="market-overview-card">
+            <div className="crop-section">
+              <div
+                className="crop-visual"
+                aria-hidden="true"
+              >
                 <span>🍅</span>
               </div>
 
-              <div className="market-crop-info">
+              <div className="crop-details">
+                <span className="small-label">
+                  CROP
+                </span>
+
                 <h2>{crop}</h2>
-                <div className="market-price-label">
-                  <TrendingUp size={19} />
-                  <span>Current market range</span>
+
+                <div className="price-caption">
+                  <TrendingUp
+                    size={16}
+                    strokeWidth={2}
+                  />
+                  <span>
+                    Current market range
+                  </span>
                 </div>
-                <div className="market-price">
-                  ₹{min}–{max}<small>/kg</small>
+
+                <div className="price-value">
+                  ₹{minPrice}–{maxPrice}
+                  <span>/kg</span>
                 </div>
-                <div className="market-change">
-                  <TrendingUp size={18} />
-                  <span>{changePct}% higher than last week</span>
+
+                <div className="price-change">
+                  <TrendingUp
+                    size={15}
+                    strokeWidth={2.2}
+                  />
+                  <span>
+                    {changePct}% higher than
+                    last week
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="market-divider" />
+            <div className="vertical-divider" />
 
-            <div className="market-meta">
-              <div className="market-meta-item">
-                <CalendarDays size={28} strokeWidth={1.8} />
+            <div className="market-details">
+              <div className="detail-item">
+                <div className="detail-icon">
+                  <CalendarDays
+                    size={20}
+                    strokeWidth={1.8}
+                  />
+                </div>
+
                 <div>
                   <span>Updated</span>
                   <strong>{updated}</strong>
                 </div>
               </div>
 
-              <div className="market-meta-item">
-                <MapPin size={29} strokeWidth={1.8} />
+              <div className="detail-item">
+                <div className="detail-icon">
+                  <MapPin
+                    size={20}
+                    strokeWidth={1.8}
+                  />
+                </div>
+
                 <div>
-                  <span>Market</span>
-                  <strong>{marketName}</strong>
+                  <span>Market Location</span>
+                  <strong>
+                    {marketLocation}
+                  </strong>
                 </div>
               </div>
             </div>
 
-            <div className="market-divider market-divider-right" />
+            <div className="vertical-divider second-divider" />
 
-            <div className="market-trend-wrap">
-              <div className="market-trend-pill">
-                <TrendingUp size={20} />
-                <span>{trendLabel}</span>
+            <div className="trend-section">
+              <span className="small-label">
+                MARKET TREND
+              </span>
+
+              <div className="trend-pill">
+                <TrendingUp
+                  size={17}
+                  strokeWidth={2}
+                />
+                <span>{trend}</span>
               </div>
+            </div>
+          </section>
+
+          <section className="market-stat-grid">
+            <div className="stat-card">
+              <div className="stat-icon">
+                <Scale
+                  size={18}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <span>BUYERS</span>
+                <strong>
+                  {buyerCount}
+                </strong>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon">
+                <TrendingUp
+                  size={18}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <span>DEMAND</span>
+                <strong>High</strong>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon">
+                <CheckCircle2
+                  size={18}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <span>DATA STATUS</span>
+                <strong>
+                  {apiError
+                    ? "Demo data"
+                    : "Available"}
+                </strong>
+              </div>
+            </div>
+          </section>
+
+          <div className="decision-note">
+            <div className="decision-note-icon">
+              <Scale
+                size={19}
+                strokeWidth={1.8}
+              />
+            </div>
+
+            <div>
+              <strong>
+                Compare buyers before selling
+              </strong>
+
+              <p>
+                The next step compares price,
+                buyer reliability, pickup distance,
+                capacity and payment timing.
+              </p>
             </div>
           </div>
 
-          <div className="market-extra-info">
-            <span>{buyers.length} available buyers</span>
-            <span>Demand: High</span>
-          </div>
+          <button
+            type="button"
+            className="compare-button"
+            onClick={handleCompareBuyers}
+          >
+            <Scale
+              size={21}
+              strokeWidth={1.9}
+            />
 
-          <button className="market-compare" onClick={() => router.push("/farmer/buyers/produce")} type="button">
-            <Scale size={27} strokeWidth={1.8} />
             <span>Compare Buyers</span>
-            <ArrowRight size={28} strokeWidth={2} />
+
+            <ArrowRight
+              size={21}
+              strokeWidth={2.1}
+            />
           </button>
         </section>
-      </main>
-
-      <div className="market-bottom-art market-bottom-left" aria-hidden="true">
-        <span className="leaf leaf-a" />
-        <span className="leaf leaf-b" />
-        <span className="leaf leaf-c" />
-        <span className="leaf leaf-d" />
+      </main><div
+        className="market-decoration left-decoration"
+        aria-hidden="true"
+      >
+        <span className="leaf leaf-1" />
+        <span className="leaf leaf-2" />
+        <span className="leaf leaf-3" />
+        <span className="leaf leaf-4" />
       </div>
-      <div className="market-bottom-art market-bottom-right" aria-hidden="true">
-        <span className="leaf leaf-a" />
-        <span className="leaf leaf-b" />
-        <span className="leaf leaf-c" />
-        <span className="leaf leaf-d" />
-        <span className="leaf leaf-e" />
+
+      <div
+        className="market-decoration right-decoration"
+        aria-hidden="true"
+      >
+        <span className="leaf leaf-1" />
+        <span className="leaf leaf-2" />
+        <span className="leaf leaf-3" />
+        <span className="leaf leaf-4" />
+        <span className="leaf leaf-5" />
       </div>
 
       <style jsx>{`
@@ -152,314 +447,504 @@ export default function MarketIntelligence() {
           min-height: 100vh;
           position: relative;
           overflow: hidden;
+          color: #123f39;
           background:
-            radial-gradient(circle at 12% 10%, rgba(255, 255, 255, 0.85), transparent 30%),
-            linear-gradient(180deg, #f6fbf9 0%, #eef9f6 56%, #e3f5f0 100%);
-          color: #073f38;
-          font-family: "DM Sans", sans-serif;
+            radial-gradient(
+              circle at 10% 5%,
+              rgba(255, 255, 255, 0.95),
+              transparent 30%
+            ),
+            linear-gradient(
+              180deg,
+              #f8fcfa 0%,
+              #eff9f6 58%,
+              #e3f5f0 100%
+            );
+          font-family:
+            Inter,
+            "DM Sans",
+            system-ui,
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif;
         }
 
         .market-page::after {
           content: "";
           position: absolute;
-          left: -8%;
-          right: -8%;
-          bottom: -125px;
-          height: 245px;
-          background: rgba(199, 237, 229, 0.62);
-          border-radius: 50% 50% 0 0 / 45% 45% 0 0;
+          left: -10%;
+          right: -10%;
+          bottom: -150px;
+          height: 270px;
+          border-radius: 50% 50% 0 0;
+          background: rgba(197, 235, 227, 0.62);
           pointer-events: none;
         }
 
         .market-header {
-          height: 94px;
-          padding: 0 61px;
+          position: relative;
+          z-index: 10;
+          height: 74px;
+          padding: 0 5%;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          background: rgba(255, 255, 255, 0.9);
-          border-bottom: 1px solid rgba(215, 235, 229, 0.8);
-          box-shadow: 0 10px 28px rgba(35, 107, 91, 0.08);
-          border-radius: 0 0 28px 28px;
-          position: relative;
-          z-index: 5;
+          background: rgba(255, 255, 255, 0.96);
+          border-bottom: 1px solid #dcebe6;
+          box-shadow:
+            0 6px 22px
+              rgba(25, 93, 78, 0.06);
         }
 
         .market-brand {
           display: flex;
           align-items: center;
-          gap: 14px;
-          color: #073f38;
-          font: 800 29px/1 "Manrope", sans-serif;
-          letter-spacing: -0.8px;
+          gap: 10px;
         }
 
         .market-brand-mark {
-          width: 45px;
-          height: 45px;
+          width: 39px;
+          height: 39px;
           display: grid;
           place-items: center;
-          color: #11906d;
-          transform: rotate(-8deg);
+          border-radius: 11px;
+          background: #e2f5ed;
+          color: #078866;
+        }
+
+        .market-brand-copy strong {
+          display: block;
+          color: #073f38;
+          font-size: 17px;
+          font-weight: 800;
+          letter-spacing: -0.3px;
+        }
+
+        .market-brand-copy span {
+          display: block;
+          margin-top: 2px;
+          color: #83938d;
+          font-size: 9px;
         }
 
         .market-header-actions {
           display: flex;
           align-items: center;
-          gap: 25px;
+          gap: 14px;
         }
 
         .market-icon-button,
         .market-profile {
           border: 0;
-          background: transparent;
-          color: #073f38;
+          padding: 0;
+          cursor: pointer;
           display: grid;
           place-items: center;
-          cursor: pointer;
-          padding: 0;
+        }
+
+        .market-icon-button {
+          width: 38px;
+          height: 38px;
+          border-radius: 10px;
+          color: #174d45;
+          background: transparent;
+        }
+
+        .market-icon-button:hover {
+          background: #edf7f4;
         }
 
         .market-profile {
-          width: 53px;
-          height: 53px;
+          width: 43px;
+          height: 43px;
           border-radius: 50%;
-          background: #d8f1eb;
           color: #087966;
+          background: #d9f1eb;
         }
 
         .market-main {
           position: relative;
-          z-index: 2;
-          max-width: 1445px;
+          z-index: 3;
+          width: min(1120px, 92%);
           margin: 0 auto;
-          padding: 38px 32px 120px;
+          padding: 30px 0 110px;
         }
 
         .market-panel {
-          background: rgba(255, 255, 255, 0.91);
-          border: 1px solid rgba(221, 239, 234, 0.95);
-          border-radius: 30px;
-          padding: 45px 39px 43px;
-          box-shadow: 0 18px 45px rgba(39, 112, 98, 0.09);
-          backdrop-filter: blur(3px);
+          padding: 31px;
+          border: 1px solid #dcebe6;
+          border-radius: 24px;
+          background: rgba(255, 255, 255, 0.95);
+          box-shadow:
+            0 18px 45px
+              rgba(39, 112, 98, 0.09);
+          backdrop-filter: blur(5px);
         }
 
         .market-back {
-          display: inline-flex;
-          align-items: center;
-          gap: 10px;
+          margin: 0 0 23px;
           padding: 0;
           border: 0;
-          background: transparent;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
           color: #087b62;
-          font: 800 18px "Manrope", sans-serif;
+          background: transparent;
+          font-size: 14px;
+          font-weight: 800;
           cursor: pointer;
-          margin-bottom: 24px;
+        }
+
+        .market-back:hover {
+          color: #075c4c;
         }
 
         .market-eyebrow {
-          color: #148267;
-          font-size: 17px;
+          color: #138167;
+          font-size: 11px;
           font-weight: 800;
-          letter-spacing: 1.8px;
-          margin-bottom: 4px;
+          letter-spacing: 1.5px;
         }
 
-        .market-panel h1 {
-          margin: 0 0 24px;
+        .market-title-area h1 {
+          margin: 6px 0 5px;
           color: #073c3b;
-          font: 800 41px/1.15 "Manrope", sans-serif;
-          letter-spacing: -1.3px;
+          font-size: clamp(30px, 4vw, 42px);
+          line-height: 1.08;
+          font-weight: 800;
+          letter-spacing: -1.4px;
         }
 
-        .market-summary {
-          min-height: 180px;
+        .market-title-area p {
+          margin: 0 0 24px;
+          color: #778984;
+          font-size: 13px;
+          line-height: 1.6;
+        }
+
+        .market-overview-card {
           display: grid;
-          grid-template-columns: 1.45fr 1px 0.95fr 1px 0.72fr;
+          grid-template-columns:
+            minmax(300px, 1.45fr)
+            1px
+            minmax(190px, 0.9fr)
+            1px
+            minmax(145px, 0.65fr);
           align-items: center;
-          gap: 30px;
-          padding: 29px 27px;
-          border: 1.5px solid #d5ebe5;
-          border-radius: 24px;
-          background: linear-gradient(180deg, rgba(248, 253, 251, 0.98), rgba(241, 251, 248, 0.95));
+          gap: 24px;
+          min-height: 176px;
+          padding: 23px;
+          border: 1px solid #d4e9e3;
+          border-radius: 20px;
+          background:
+            linear-gradient(
+              180deg,
+              #f9fdfb 0%,
+              #f1faf7 100%
+            );
         }
 
-        .market-crop-block {
+        .crop-section {
           display: flex;
           align-items: center;
-          gap: 27px;
+          gap: 19px;
           min-width: 0;
         }
 
-        .market-crop-image {
-          width: 132px;
-          height: 132px;
-          flex: 0 0 132px;
+        .crop-visual {
+          width: 106px;
+          height: 106px;
+          flex: 0 0 106px;
           display: grid;
           place-items: center;
-          overflow: hidden;
-          border-radius: 22px;
-          background: linear-gradient(145deg, #effaf5, #e4f4ef);
-          box-shadow: inset 0 0 0 1px rgba(180, 222, 212, 0.25);
+          border-radius: 18px;
+          background:
+            linear-gradient(
+              145deg,
+              #effaf5,
+              #e2f3ed
+            );
+          box-shadow:
+            inset 0 0 0 1px
+              rgba(181, 222, 212, 0.35);
         }
 
-        .market-crop-image span {
-          font-size: 77px;
+        .crop-visual span {
+          font-size: 60px;
           line-height: 1;
-          filter: drop-shadow(0 9px 9px rgba(115, 82, 41, 0.18));
+          filter:
+            drop-shadow(
+              0 7px 7px
+                rgba(100, 75, 38, 0.18)
+            );
         }
 
-        .market-crop-info h2 {
-          margin: 0 0 8px;
+        .small-label {
+          display: block;
+          color: #8a9892;
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 1px;
+        }
+
+        .crop-details h2 {
+          margin: 4px 0 8px;
           color: #0a403d;
-          font: 800 27px/1.1 "Manrope", sans-serif;
+          font-size: 23px;
+          font-weight: 800;
         }
 
-        .market-price-label {
+        .price-caption {
           display: flex;
           align-items: center;
-          gap: 7px;
-          color: #81938e;
-          font-size: 16px;
-          margin-bottom: 2px;
+          gap: 6px;
+          color: #81928d;
+          font-size: 12px;
         }
 
-        .market-price {
+        .price-value {
+          margin-top: 2px;
           color: #087d65;
-          font: 800 32px/1.1 "Manrope", sans-serif;
-          letter-spacing: -0.8px;
+          font-size: 28px;
+          font-weight: 800;
+          letter-spacing: -0.7px;
           white-space: nowrap;
         }
 
-        .market-price small {
-          color: #78908a;
-          font: 500 15px "DM Sans", sans-serif;
-          margin-left: 5px;
+        .price-value span {
+          margin-left: 4px;
+          color: #7b918b;
+          font-size: 12px;
+          font-weight: 500;
         }
 
-        .market-change {
+        .price-change {
+          margin-top: 6px;
           display: flex;
           align-items: center;
-          gap: 7px;
+          gap: 5px;
           color: #13825f;
-          font-size: 15px;
+          font-size: 11px;
           font-weight: 700;
-          margin-top: 8px;
         }
 
-        .market-divider {
+        .vertical-divider {
           width: 1px;
-          height: 105px;
+          height: 92px;
           background: #d7eae5;
         }
 
-        .market-meta {
+        .market-details {
           display: grid;
-          gap: 28px;
+          gap: 22px;
         }
 
-        .market-meta-item {
+        .detail-item {
           display: flex;
           align-items: center;
-          gap: 15px;
-          color: #123f3b;
+          gap: 10px;
         }
 
-        .market-meta-item svg {
+        .detail-icon {
+          width: 35px;
+          height: 35px;
+          flex: 0 0 35px;
+          display: grid;
+          place-items: center;
+          border-radius: 10px;
           color: #0a5149;
-          flex: 0 0 auto;
+          background: #e5f3ef;
         }
 
-        .market-meta-item span,
-        .market-meta-item strong {
+        .detail-item span,
+        .detail-item strong {
           display: block;
         }
 
-        .market-meta-item span {
-          color: #82938e;
-          font-size: 15px;
-          margin-bottom: 1px;
+        .detail-item span {
+          margin-bottom: 2px;
+          color: #84938e;
+          font-size: 10px;
         }
 
-        .market-meta-item strong {
+        .detail-item strong {
           color: #073e3a;
-          font: 800 17px "Manrope", sans-serif;
+          font-size: 14px;
+          font-weight: 800;
         }
 
-        .market-trend-wrap {
+        .trend-section {
           align-self: start;
-          justify-self: end;
+          justify-self: center;
+          text-align: center;
         }
 
-        .market-trend-pill {
+        .trend-pill {
+          margin-top: 8px;
           display: inline-flex;
           align-items: center;
-          gap: 8px;
-          padding: 11px 17px;
+          gap: 6px;
+          padding: 9px 12px;
           border-radius: 999px;
           color: #18815f;
-          background: #e5f6e9;
-          font-size: 15px;
+          background: #e4f6e8;
+          font-size: 11px;
           font-weight: 800;
           white-space: nowrap;
         }
 
-        .market-extra-info {
-          display: none;
+        .market-stat-grid {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 11px;
         }
 
-        .market-compare {
+        .stat-card {
+          min-height: 66px;
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          border: 1px solid #e0ece7;
+          border-radius: 13px;
+          background: #fbfdfc;
+        }
+
+        .stat-icon {
+          width: 34px;
+          height: 34px;
+          flex: 0 0 34px;
+          display: grid;
+          place-items: center;
+          border-radius: 9px;
+          color: #31764a;
+          background: #e5f3e7;
+        }
+
+        .stat-card span {
+          display: block;
+          color: #8a9892;
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.8px;
+        }
+
+        .stat-card strong {
+          display: block;
+          margin-top: 3px;
+          color: #17473f;
+          font-size: 14px;
+          font-weight: 800;
+        }
+
+        .decision-note {
+          margin-top: 14px;
+          padding: 14px 16px;
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          border: 1px solid #d9e9df;
+          border-radius: 13px;
+          background: #f1f8f3;
+        }
+
+        .decision-note-icon {
+          width: 34px;
+          height: 34px;
+          flex: 0 0 34px;
+          display: grid;
+          place-items: center;
+          border-radius: 9px;
+          color: #31764a;
+          background: #dff0e3;
+        }
+
+        .decision-note strong {
+          display: block;
+          color: #24553a;
+          font-size: 12px;
+        }
+
+        .decision-note p {
+          margin: 3px 0 0;
+          color: #6d7d73;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .compare-button {
           width: 100%;
-          margin-top: 24px;
-          min-height: 72px;
+          min-height: 57px;
+          margin-top: 15px;
+          padding: 0 18px;
           border: 0;
-          border-radius: 15px;
-          background: linear-gradient(90deg, #079568, #0aa873);
-          color: white;
+          border-radius: 12px;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 16px;
-          font: 800 20px "Manrope", sans-serif;
+          gap: 11px;
+          color: white;
+          background:
+            linear-gradient(
+              90deg,
+              #078f66,
+              #0aa873
+            );
+          font-size: 15px;
+          font-weight: 800;
           cursor: pointer;
-          box-shadow: 0 10px 25px rgba(4, 139, 100, 0.18);
-          transition: transform 0.18s ease, box-shadow 0.18s ease;
+          box-shadow:
+            0 8px 22px
+              rgba(4, 139, 100, 0.18);
+          transition:
+            transform 0.18s ease,
+            box-shadow 0.18s ease;
         }
 
-        .market-compare:hover {
+        .compare-button:hover {
           transform: translateY(-1px);
-          box-shadow: 0 13px 30px rgba(4, 139, 100, 0.23);
+          box-shadow:
+            0 12px 28px
+              rgba(4, 139, 100, 0.24);
         }
 
-        .market-bottom-art {
+        .market-decoration {
           position: absolute;
           z-index: 1;
-          bottom: -2px;
-          width: 190px;
-          height: 260px;
-          opacity: 0.68;
+          bottom: 0;
+          width: 160px;
+          height: 210px;
+          opacity: 0.55;
           pointer-events: none;
         }
 
-        .market-bottom-left {
-          left: -5px;
+        .left-decoration {
+          left: 0;
         }
 
-        .market-bottom-right {
-          right: -6px;
+        .right-decoration {
+          right: 0;
           transform: scaleX(-1);
         }
 
         .leaf {
           position: absolute;
+          width: 28px;
+          height: 82px;
           display: block;
-          width: 35px;
-          height: 92px;
           border-radius: 100% 0 100% 0;
-          background: linear-gradient(145deg, #55bf91, #1e9a72);
+          background:
+            linear-gradient(
+              145deg,
+              #55bf91,
+              #1e9a72
+            );
           transform-origin: bottom center;
-          box-shadow: inset -5px -4px 8px rgba(6, 104, 74, 0.12);
+          box-shadow:
+            inset -4px -4px 8px
+              rgba(6, 104, 74, 0.12);
         }
 
         .leaf::after {
@@ -469,62 +954,201 @@ export default function MarketIntelligence() {
           bottom: 0;
           width: 1px;
           height: 78%;
-          background: rgba(255, 255, 255, 0.38);
+          background: rgba(255, 255, 255, 0.4);
           transform: rotate(-16deg);
         }
 
-        .leaf-a { left: 19px; bottom: 0; transform: rotate(-38deg); height: 130px; }
-        .leaf-b { left: 62px; bottom: 1px; transform: rotate(-12deg); height: 105px; width: 31px; }
-        .leaf-c { left: 94px; bottom: 30px; transform: rotate(25deg); height: 116px; width: 33px; }
-        .leaf-d { left: 47px; bottom: 77px; transform: rotate(-65deg); height: 80px; width: 27px; }
-        .leaf-e { left: 108px; bottom: 98px; transform: rotate(56deg); height: 78px; width: 27px; }
+        .leaf-1 {
+          left: 18px;
+          bottom: 0;
+          height: 120px;
+          transform: rotate(-38deg);
+        }
 
-        @media (max-width: 980px) {
-          .market-header { padding: 0 30px; }
-          .market-main { padding: 28px 20px 110px; }
-          .market-panel { padding: 34px 25px 30px; }
-          .market-summary {
-            grid-template-columns: 1fr 1px 1fr;
-            gap: 22px;
+        .leaf-2 {
+          left: 53px;
+          bottom: 0;
+          height: 96px;
+          width: 26px;
+          transform: rotate(-12deg);
+        }
+
+        .leaf-3 {
+          left: 84px;
+          bottom: 25px;
+          height: 105px;
+          width: 29px;
+          transform: rotate(25deg);
+        }
+
+        .leaf-4 {
+          left: 40px;
+          bottom: 67px;
+          height: 73px;
+          width: 23px;
+          transform: rotate(-65deg);
+        }
+
+        .leaf-5 {
+          left: 94px;
+          bottom: 86px;
+          height: 70px;
+          width: 23px;
+          transform: rotate(56deg);
+        }
+
+        @media (max-width: 950px) {
+          .market-overview-card {
+            grid-template-columns:
+              minmax(270px, 1.3fr)
+              1px
+              minmax(180px, 0.8fr);
           }
-          .market-divider-right,
-          .market-trend-wrap { display: none; }
-          .market-crop-image { width: 105px; height: 105px; flex-basis: 105px; }
-          .market-crop-image span { font-size: 62px; }
+
+          .second-divider,
+          .trend-section {
+            display: none;
+          }
         }
 
         @media (max-width: 680px) {
-          .market-header { height: 78px; padding: 0 18px; border-radius: 0 0 20px 20px; }
-          .market-brand { font-size: 23px; gap: 8px; }
-          .market-brand-mark { width: 36px; height: 36px; }
-          .market-header-actions { gap: 13px; }
-          .market-profile { width: 45px; height: 45px; }
-          .market-main { padding: 18px 12px 95px; }
-          .market-panel { padding: 25px 16px 20px; border-radius: 22px; }
-          .market-back { font-size: 15px; margin-bottom: 19px; }
-          .market-eyebrow { font-size: 12px; letter-spacing: 1.3px; }
-          .market-panel h1 { font-size: 29px; margin-bottom: 18px; }
-          .market-summary {
-            grid-template-columns: 1fr;
-            gap: 18px;
-            padding: 18px;
+          .market-header {
+            height: 68px;
+            padding: 0 16px;
           }
-          .market-divider { width: 100%; height: 1px; }
-          .market-crop-block { gap: 15px; }
-          .market-crop-image { width: 83px; height: 83px; flex-basis: 83px; border-radius: 17px; }
-          .market-crop-image span { font-size: 48px; }
-          .market-crop-info h2 { font-size: 22px; }
-          .market-price-label { font-size: 13px; }
-          .market-price { font-size: 27px; }
-          .market-change { font-size: 13px; }
-          .market-meta { grid-template-columns: 1fr 1fr; gap: 12px; }
-          .market-meta-item { gap: 8px; }
-          .market-meta-item svg { width: 23px; height: 23px; }
-          .market-meta-item span { font-size: 12px; }
-          .market-meta-item strong { font-size: 14px; }
-          .market-compare { min-height: 58px; margin-top: 16px; font-size: 16px; gap: 10px; }
-          .market-bottom-art { transform: scale(0.72); transform-origin: bottom left; }
-          .market-bottom-right { transform: scaleX(-1) scale(0.72); transform-origin: bottom right; }
+
+          .market-brand-copy span {
+            display: none;
+          }
+
+          .market-brand-copy strong {
+            font-size: 16px;
+          }
+
+          .market-brand-mark {
+            width: 35px;
+            height: 35px;
+          }
+
+          .market-header-actions {
+            gap: 7px;
+          }
+
+          .market-profile {
+            width: 40px;
+            height: 40px;
+          }
+
+          .market-main {
+            width: 94%;
+            padding: 16px 0 80px;
+          }
+
+          .market-panel {
+            padding: 22px 15px 17px;
+            border-radius: 20px;
+          }
+
+          .market-back {
+            margin-bottom: 19px;
+            font-size: 13px;
+          }
+
+          .market-title-area h1 {
+            font-size: 29px;
+          }
+
+          .market-title-area p {
+            font-size: 12px;
+            margin-bottom: 18px;
+          }
+
+          .market-overview-card {
+            grid-template-columns: 1fr;
+            gap: 16px;
+            padding: 16px;
+          }
+
+          .vertical-divider {
+            width: 100%;
+            height: 1px;
+          }
+
+          .crop-section {
+            gap: 13px;
+          }
+
+          .crop-visual {
+            width: 78px;
+            height: 78px;
+            flex-basis: 78px;
+            border-radius: 14px;
+          }
+
+          .crop-visual span {
+            font-size: 43px;
+          }
+
+          .crop-details h2 {
+            font-size: 20px;
+          }
+
+          .price-value {
+            font-size: 24px;
+          }
+
+          .market-details {
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+          }
+
+          .detail-item {
+            gap: 7px;
+          }
+
+          .detail-icon {
+            width: 31px;
+            height: 31px;
+            flex-basis: 31px;
+          }
+
+          .detail-item span {
+            font-size: 9px;
+          }
+
+          .detail-item strong {
+            font-size: 12px;
+          }
+
+          .market-stat-grid {
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .stat-card {
+            min-height: 58px;
+          }
+
+          .decision-note {
+            padding: 12px;
+          }
+
+          .compare-button {
+            min-height: 54px;
+            font-size: 14px;
+          }
+
+          .market-decoration {
+            transform: scale(0.65);
+            transform-origin: bottom left;
+          }
+
+          .right-decoration {
+            transform:
+              scaleX(-1)
+              scale(0.65);
+            transform-origin: bottom right;
+          }
         }
       `}</style>
     </div>

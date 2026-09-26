@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import hashlib
 import secrets
 import re
@@ -1219,7 +1219,7 @@ def _estimate_shelf_life_with_openrouter(
         "elapsed time. Quantity and market price are context only and must not be used to invent "
         "a shelf-life number. If some quality field is unavailable, use the other reliable fields "
         "rather than fabricating the missing field. "
-        "Return a practical RANGE, not a single number, such as 'Xâ€“Y days'. "
+        "Return a practical RANGE, not a single number, such as 'X–Y days'. "
         "Use your agricultural/post-harvest knowledge to choose a defensible range for this exact "
         "combination of inputs. The result is an AI estimate, not a laboratory guarantee. "
         "If there is genuinely insufficient information to estimate a range, return exactly "
@@ -1363,7 +1363,7 @@ def quality_analyze(data: dict):
     if not 2 <= len(images) <= 4:
         raise HTTPException(
             status_code=422,
-            detail="Capture 2â€“4 produce photos before starting AI analysis.",
+            detail="Capture 2–4 produce photos before starting AI analysis.",
         )
 
     harvest_id = data.get("harvest_id")
@@ -1460,7 +1460,7 @@ def quality_analyze(data: dict):
     result["analyzed_at"] = datetime.utcnow().isoformat() + "Z"
     result["request_id"] = request_id
     result["harvest_id"] = harvest_id
-    result["disclaimer"] = "AI-generated visual assessment â€” not laboratory verified."
+    result["disclaimer"] = "AI-generated visual assessment — not laboratory verified."
 
     with db_connect() as conn:
         conn.execute(
@@ -1522,7 +1522,7 @@ def _parse_shelf_life_range(value: object) -> tuple[Optional[float], Optional[fl
         return None, None
 
     # Normalise common dash variants and decimal commas.
-    text = text.replace("â€“", "-").replace("â€”", "-").replace(",", ".")
+    text = text.replace("–", "-").replace("—", "-").replace(",", ".")
 
     import re as _re
 
@@ -1818,23 +1818,10 @@ def optimize():
 
     results = []
 
-    # XGBoost demo prediction layer.
-    # The model is trained on synthetic/demo data.
-    qty = 1550.0
-
-    demand_scores = {
-        "High": 0.9,
-        "Medium": 0.6,
-        "Low": 0.3,
-    }
-
-    shelf_life_days = 6.0
-
     for buyer in BUYERS:
 
         candidate = dict(buyer)
 
-        # Existing deterministic optimization calculation.
         candidate["net_per_kg"] = round(
             candidate["price"]
             - candidate["transport"]
@@ -1842,34 +1829,14 @@ def optimize():
             2,
         )
 
-        # XGBoost prediction is additional intelligence metadata.
-        try:
-            candidate["xgboost_predicted_return_per_kg"] = (
-                predict_net_return(
-                    price_per_kg=float(candidate["price"]),
-                    transport_per_kg=float(candidate["transport"]),
-                    expected_loss_per_kg=float(candidate["loss"]),
-                    quantity_kg=qty,
-                    demand_score=demand_scores.get(
-                        candidate.get("demand"),
-                        0.5,
-                    ),
-                    shelf_life_days=shelf_life_days,
-                )
-            )
-        except Exception as exc:
-            print(
-                f"XGBoost prediction failed for "
-                f"{candidate.get('name')}: {type(exc).__name__}"
-            )
-            candidate["xgboost_predicted_return_per_kg"] = None
-
         results.append(candidate)
 
     selected = max(
         results,
         key=lambda x: x["net_per_kg"],
     )
+
+    qty = DEMO_HARVEST["quantity_kg"]
 
     gross = round(
         selected["price"] * qty,
@@ -1901,10 +1868,10 @@ def optimize():
 
         "quantity_kg": qty,
 
-        "vehicle": "2 ? 1-ton vehicles",
+        "vehicle": "2 × 1-ton vehicles",
 
         "route": (
-            "Farm ? Aggregation Point ? "
+            "Farm → Aggregation Point → "
             + selected["name"]
         ),
 
@@ -1922,12 +1889,6 @@ def optimize():
 
         "candidates": results,
 
-        "xgboost": {
-            "model": "XGBoost XGBRegressor",
-            "training_mode": "DEMO/SYNTHETIC",
-            "status": "ACTIVE",
-        },
-
         "why": [
             "Better quality-price fit",
             "Buyer demand matches quantity",
@@ -1943,7 +1904,9 @@ def optimize():
             "costs reduce net realization."
         ),
 
-        "objective": "Expected Net Realized Return",
+        "objective": (
+            "Expected Net Realized Return"
+        ),
 
         "mode": "DEMO",
     }
@@ -2048,8 +2011,8 @@ def transcribe():
 
     return {
         "text": (
-            "à°¨à°¾ à°Ÿà°®à°¾à°Ÿà°¾à°²à± à°…à°®à±à°®à°¡à°¾à°¨à°¿à°•à°¿ "
-            "à°®à°‚à°šà°¿ à°®à°¾à°°à±à°•à±†à°Ÿà± à°à°¦à°¿?"
+            "నా టమాటాలు అమ్మడానికి "
+            "మంచి మార్కెట్ ఏది?"
         ),
 
         "mode": "DEMO",
@@ -2108,6 +2071,5 @@ def root():
         "docs": "/docs",
         "health": "/health",
     }
-
 
 

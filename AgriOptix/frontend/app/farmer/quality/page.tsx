@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCircle2, Cpu, Eye, Loader2, X, RefreshCw } from "lucide-react";
+import {
+  CheckCircle2,
+  Cpu,
+  Eye,
+  Loader2,
+  X,
+  RefreshCw,
+} from "lucide-react";
 import { useWorkflow, api } from "../../../lib/store";
 
 type QualityResult = {
@@ -19,19 +26,28 @@ type QualityResult = {
   harvest_id?: number;
 };
 
-export default function AIQuality() {
+function AIQualityContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { wf, setWf } = useWorkflow();
-  const [quality, setQuality] = useState<QualityResult | null>(wf.aiQuality || null);
+
+  const [quality, setQuality] = useState<QualityResult | null>(
+    wf.aiQuality || null
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (searchParams.get("autoAnalyze") === "1" && wf.photos.length >= 2 && !quality && !loading) {
+    if (
+      searchParams.get("autoAnalyze") === "1" &&
+      wf.photos.length >= 2 &&
+      !quality &&
+      !loading
+    ) {
       void analyze();
     }
-    // The query parameter is only a one-time trigger for the existing quality step.
+
+    // Query parameter is a one-time trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, wf.photos.length]);
 
@@ -49,7 +65,9 @@ export default function AIQuality() {
       const result = await api("/api/quality/analyze", {
         method: "POST",
         cache: "no-store",
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+        },
         body: JSON.stringify({
           images: wf.photos,
           crop: wf.harvest?.crop || null,
@@ -57,25 +75,42 @@ export default function AIQuality() {
           harvest: wf.harvest || null,
         }),
       });
+
       const qualityResult = result as QualityResult;
+
       setQuality(qualityResult);
+
       if (qualityResult.harvest_id) {
         setWf({
           aiQuality: qualityResult,
-          harvest: { ...(wf.harvest || {}), id: qualityResult.harvest_id },
+          harvest: {
+            ...(wf.harvest || {}),
+            id: qualityResult.harvest_id,
+          },
         });
       } else {
-        setWf({ aiQuality: qualityResult });
+        setWf({
+          aiQuality: qualityResult,
+        });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "AI quality analysis failed. Please try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "AI quality analysis failed. Please try again."
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  const handleClose = () => router.push("/farmer/photos");
-  const handleContinue = () => router.push("/farmer/perishability");
+  const handleClose = () => {
+    router.push("/farmer/photos");
+  };
+
+  const handleContinue = () => {
+    router.push("/farmer/perishability");
+  };
 
   const fields: Array<[string, keyof QualityResult]> = [
     ["Crop Name", "crop_name"],
@@ -90,71 +125,186 @@ export default function AIQuality() {
   return (
     <main className="quality-page">
       <section className="quality-container">
-        <header className="quality-step-header"><span className="quality-step-number">4.</span><span className="quality-step-divider" /><h1>AI Quality Assessment</h1></header>
+        <header className="quality-step-header">
+          <span className="quality-step-number">4.</span>
+
+          <span className="quality-step-divider" />
+
+          <h1>AI Quality Assessment</h1>
+        </header>
 
         <article className="quality-card">
           <div className="quality-card-header">
-            <div className="quality-title-group"><span className="quality-ai-icon"><Cpu size={43} strokeWidth={2.2} /></span><h2>AI Quality Analysis</h2></div>
-            <button type="button" className="quality-close" onClick={handleClose} aria-label="Close and return to photos"><X size={34} strokeWidth={2.4} /></button>
+            <div className="quality-title-group">
+              <span className="quality-ai-icon">
+                <Cpu size={43} strokeWidth={2.2} />
+              </span>
+
+              <h2>AI Quality Analysis</h2>
+            </div>
+
+            <button
+              type="button"
+              className="quality-close"
+              onClick={handleClose}
+              aria-label="Close and return to photos"
+            >
+              <X size={34} strokeWidth={2.4} />
+            </button>
           </div>
 
           <div className="quality-inner">
             <div className="quality-photo-strip">
-              {wf.photos.map((photo, index) => <img key={`${photo.length}-${index}`} src={photo} alt={`Captured produce photo ${index + 1}`} />)}
+              {wf.photos.map((photo, index) => (
+                <img
+                  key={`${photo.length}-${index}`}
+                  src={photo}
+                  alt={`Captured produce photo ${index + 1}`}
+                />
+              ))}
             </div>
 
             {!quality && !loading ? (
               <div className="quality-start">
-                <strong>Ready to analyze the captured produce</strong>
-                <span>{wf.photos.length} photos will be sent to the vision model together. Farmer Reported Quality remains separate.</span>
-                <button type="button" className="quality-details-button" onClick={analyze}><Eye size={26} /><span>Analyze Quality</span></button>
+                <strong>
+                  Ready to analyze the captured produce
+                </strong>
+
+                <span>
+                  {wf.photos.length} photos will be sent to the vision
+                  model together. Farmer Reported Quality remains
+                  separate.
+                </span>
+
+                <button
+                  type="button"
+                  className="quality-details-button"
+                  onClick={analyze}
+                >
+                  <Eye size={26} />
+                  <span>Analyze Quality</span>
+                </button>
               </div>
             ) : null}
 
             {loading ? (
-              <div className="quality-loading" aria-live="polite"><Loader2 size={30} className="quality-spinner" /><div><strong>Analyzing your actual photos</strong><span>Sending {wf.photos.length} captured images to the vision model…</span></div></div>
+              <div
+                className="quality-loading"
+                aria-live="polite"
+              >
+                <Loader2
+                  size={30}
+                  className="quality-spinner"
+                />
+
+                <div>
+                  <strong>
+                    Analyzing your actual photos
+                  </strong>
+
+                  <span>
+                    Sending {wf.photos.length} captured images
+                    to the vision model…
+                  </span>
+                </div>
+              </div>
             ) : null}
 
             {error ? (
-              <div className="quality-error" role="alert"><strong>AI quality analysis failed.</strong><span>{error}</span><button type="button" className="quality-details-button" onClick={analyze}><RefreshCw size={24} /><span>Try Again</span></button></div>
+              <div
+                className="quality-error"
+                role="alert"
+              >
+                <strong>
+                  AI quality analysis failed.
+                </strong>
+
+                <span>{error}</span>
+
+                <button
+                  type="button"
+                  className="quality-details-button"
+                  onClick={analyze}
+                >
+                  <RefreshCw size={24} />
+                  <span>Try Again</span>
+                </button>
+              </div>
             ) : null}
 
             {quality ? (
               <>
                 <div className="quality-result-card">
-                  <div className="quality-grade-row"><span className="quality-grade-icon"><CheckCircle2 size={31} strokeWidth={2.4} /></span><span className="quality-grade-label">{quality.overall_quality}</span></div>
-                  <div className="quality-confidence-row"><strong>{quality.confidence}%</strong><span>AI confidence</span></div>
+                  <div className="quality-grade-row">
+                    <span className="quality-grade-icon">
+                      <CheckCircle2
+                        size={31}
+                        strokeWidth={2.4}
+                      />
+                    </span>
+
+                    <span className="quality-grade-label">
+                      {quality.overall_quality}
+                    </span>
+                  </div>
+
+                  <div className="quality-confidence-row">
+                    <strong>{quality.confidence}%</strong>
+
+                    <span>AI confidence</span>
+                  </div>
                 </div>
 
                 <div className="quality-field-grid">
-                  {fields.map(([label, key]) => <div className="quality-field" key={key}><span>{label}</span><strong>{String(quality[key] ?? "Not determinable from image")}</strong></div>)}
+                  {fields.map(([label, key]) => (
+                    <div
+                      className="quality-field"
+                      key={key}
+                    >
+                      <span>{label}</span>
+
+                      <strong>
+                        {String(
+                          quality[key] ??
+                            "Not determinable from image"
+                        )}
+                      </strong>
+                    </div>
+                  ))}
                 </div>
 
-                <p className="quality-disclaimer">{quality.disclaimer || "AI-generated visual assessment — not laboratory verified."}</p>
+                <p className="quality-disclaimer">
+                  {quality.disclaimer ||
+                    "AI-generated visual assessment — not laboratory verified."}
+                </p>
 
-                <div className="quality-actions"><button type="button" className="quality-details-button secondary" onClick={analyze}><RefreshCw size={24} /><span>Analyze Again</span></button><button type="button" className="quality-details-button" onClick={handleContinue}><Eye size={24} /><span>Continue</span></button></div>
+                <div className="quality-actions">
+                  <button
+                    type="button"
+                    className="quality-details-button secondary"
+                    onClick={analyze}
+                  >
+                    <RefreshCw size={24} />
+                    <span>Analyze Again</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="quality-details-button"
+                    onClick={handleContinue}
+                  >
+                    <Eye size={24} />
+                    <span>Continue</span>
+                  </button>
+                </div>
               </>
             ) : null}
           </div>
         </article>
       </section>
+
       <style jsx>{`
-        .quality-photo-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:22px; }
-        .quality-photo-strip img { width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:16px; background:#edf5f2; }
-        .quality-start { display:flex; flex-direction:column; gap:12px; padding:24px; border:2px solid #e0ece8; border-radius:20px; background:#f7fbfa; }
-        .quality-start strong { font-size:20px; }
-        .quality-start span { color:#5d726d; line-height:1.5; }
-        .quality-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:20px; }
-        .quality-field { padding:18px; border:2px solid #e2ebe8; border-radius:16px; background:#fbfdfc; display:flex; flex-direction:column; gap:7px; }
-        .quality-field span { color:#6a7d78; font-size:14px; font-weight:700; }
-        .quality-field strong { color:#16352d; font-size:18px; line-height:1.35; }
-        .quality-disclaimer { margin:18px 0 0; color:#667b75; font-size:14px; line-height:1.5; }
-        .quality-actions { display:flex; gap:12px; margin-top:20px; }
-        .quality-actions .quality-details-button { flex:1; }
-        .quality-details-button.secondary { background:#edf5f2; color:#17654f; }
-        .quality-error { display:flex; flex-direction:column; gap:10px; padding:18px; border-radius:16px; background:#fff3f1; color:#8f3428; }
-        @media (max-width:700px) { .quality-photo-strip { grid-template-columns:repeat(2,minmax(0,1fr)); } .quality-field-grid { grid-template-columns:1fr; } .quality-actions { flex-direction:column; } }
-        .quality-page {
+.quality-page {
           min-height: 100vh;
           box-sizing: border-box;
           padding: 36px 28px 56px;
@@ -256,7 +406,9 @@ export default function AIQuality() {
           background: #edf8f5;
           color: #0b9569;
           cursor: pointer;
-          transition: transform 0.18s ease, background 0.18s ease;
+          transition:
+            transform 0.18s ease,
+            background 0.18s ease;
         }
 
         .quality-close:hover {
@@ -265,11 +417,29 @@ export default function AIQuality() {
         }
 
         .quality-inner {
-          padding: 0 0 0;
+          padding: 0;
           border: 2px solid #e3f0ed;
           border-radius: 27px;
           background: #ffffff;
           overflow: hidden;
+        }
+
+        .quality-photo-strip {
+          display: grid;
+          grid-template-columns: repeat(
+            4,
+            minmax(0, 1fr)
+          );
+          gap: 12px;
+          margin: 18px 18px 22px;
+        }
+
+        .quality-photo-strip img {
+          width: 100%;
+          aspect-ratio: 1 / 1;
+          object-fit: cover;
+          border-radius: 16px;
+          background: #edf5f2;
         }
 
         .quality-image-frame {
@@ -298,6 +468,26 @@ export default function AIQuality() {
           color: #5f7771;
           font-size: 17px;
           font-weight: 650;
+        }
+
+        .quality-start {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin: 22px 18px 0;
+          padding: 24px;
+          border: 2px solid #e0ece8;
+          border-radius: 20px;
+          background: #f7fbfa;
+        }
+
+        .quality-start strong {
+          font-size: 20px;
+        }
+
+        .quality-start span {
+          color: #5d726d;
+          line-height: 1.5;
         }
 
         .quality-loading {
@@ -400,43 +590,97 @@ export default function AIQuality() {
           font-weight: 700;
         }
 
-        .quality-indicators {
+        .quality-field-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            2,
+            minmax(0, 1fr)
+          );
+          gap: 14px;
           margin: 28px 18px 0;
-          padding: 24px 30px;
-          border: 2px solid #dceae7;
-          border-radius: 23px;
-          background: #ffffff;
         }
 
-        .quality-indicator {
-          min-height: 55px;
+        .quality-field {
+          padding: 18px;
+          border: 2px solid #e2ebe8;
+          border-radius: 16px;
+          background: #fbfdfc;
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+        }
+
+        .quality-field span {
+          color: #6a7d78;
+          font-size: 14px;
+          font-weight: 700;
+        }
+
+        .quality-field strong {
+          color: #16352d;
+          font-size: 18px;
+          line-height: 1.35;
+        }
+
+        .quality-disclaimer {
+          margin: 18px 18px 0;
+          color: #667b75;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+
+        .quality-actions {
+          display: flex;
+          gap: 12px;
+          margin-top: 20px;
+        }
+
+        .quality-actions .quality-details-button {
+          flex: 1;
+          width: auto;
+          margin-left: 18px;
+          margin-right: 18px;
+        }
+
+        .quality-actions .quality-details-button + .quality-details-button {
+          margin-left: 0;
+        }
+
+        .quality-details-button {
+          width: calc(100% - 36px);
+          min-height: 84px;
+          margin: 28px 18px 18px;
+          padding: 0 24px;
+          border: 0;
+          border-radius: 22px;
           display: flex;
           align-items: center;
-          gap: 23px;
-          color: #10243a;
-          font-size: clamp(19px, 2.1vw, 27px);
-          font-weight: 650;
-        }
-
-        .quality-indicator + .quality-indicator {
-          margin-top: 8px;
-        }
-
-        .quality-check-icon {
-          width: 39px;
-          height: 39px;
-          flex: 0 0 auto;
-          display: grid;
-          place-items: center;
+          justify-content: center;
+          gap: 16px;
+          background: #119c6d;
           color: #ffffff;
-          background: #12a06f;
-          border-radius: 50%;
+          font: inherit;
+          font-size: clamp(24px, 3vw, 31px);
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 10px 24px rgba(17, 156, 109, 0.2);
+          transition:
+            background 0.18s ease,
+            transform 0.18s ease;
         }
 
-        .quality-no-indicators {
-          color: #71858d;
-          font-size: 17px;
-          padding: 8px 0;
+        .quality-details-button:hover {
+          background: #0d8d62;
+          transform: translateY(-1px);
+        }
+
+        .quality-details-button.secondary {
+          background: #edf5f2;
+          color: #17654f;
+        }
+
+        .quality-details-button.secondary:hover {
+          background: #e0eee9;
         }
 
         .quality-error {
@@ -460,32 +704,6 @@ export default function AIQuality() {
         .quality-error span {
           margin-top: 7px;
           font-size: 15px;
-        }
-
-        .quality-details-button {
-          width: calc(100% - 36px);
-          min-height: 84px;
-          margin: 28px 18px 18px;
-          padding: 0 24px;
-          border: 0;
-          border-radius: 22px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          background: #119c6d;
-          color: #ffffff;
-          font: inherit;
-          font-size: clamp(24px, 3vw, 31px);
-          font-weight: 800;
-          cursor: pointer;
-          box-shadow: 0 10px 24px rgba(17, 156, 109, 0.2);
-          transition: background 0.18s ease, transform 0.18s ease;
-        }
-
-        .quality-details-button:hover {
-          background: #0d8d62;
-          transform: translateY(-1px);
         }
 
         @media (max-width: 760px) {
@@ -559,6 +777,14 @@ export default function AIQuality() {
             border-radius: 21px;
           }
 
+          .quality-photo-strip {
+            grid-template-columns: repeat(
+              2,
+              minmax(0, 1fr)
+            );
+            margin: 12px 12px 18px;
+          }
+
           .quality-image-frame {
             margin: 12px 12px 0;
             height: 235px;
@@ -605,26 +831,28 @@ export default function AIQuality() {
             font-size: 22px;
           }
 
-          .quality-indicators {
+          .quality-field-grid {
+            grid-template-columns: 1fr;
             margin: 17px 12px 0;
-            padding: 16px 16px;
-            border-radius: 18px;
           }
 
-          .quality-indicator {
-            min-height: 45px;
-            gap: 14px;
-            font-size: 18px;
+          .quality-field {
+            padding: 16px;
           }
 
-          .quality-check-icon {
-            width: 33px;
-            height: 33px;
+          .quality-disclaimer {
+            margin-left: 12px;
+            margin-right: 12px;
           }
 
-          .quality-check-icon :global(svg) {
-            width: 20px;
-            height: 20px;
+          .quality-actions {
+            flex-direction: column;
+            gap: 0;
+          }
+
+          .quality-actions .quality-details-button {
+            width: calc(100% - 24px);
+            margin: 18px 12px 12px;
           }
 
           .quality-details-button {
@@ -697,5 +925,13 @@ export default function AIQuality() {
         }
       `}</style>
     </main>
+  );
+}
+
+export default function AIQuality() {
+  return (
+    <Suspense fallback={<div>Loading AI Quality...</div>}>
+      <AIQualityContent />
+    </Suspense>
   );
 }

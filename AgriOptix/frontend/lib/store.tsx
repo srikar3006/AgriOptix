@@ -41,6 +41,7 @@ export type Workflow = {
   quality: any | null;
   aiQuality: any | null;
   perishability: any | null;
+  market: any | null;
   buyers: any[];
   optimization: any | null;
   acceptedPlan: boolean;
@@ -65,6 +66,8 @@ const EMPTY: Workflow = {
   aiQuality: null,
 
   perishability: null,
+
+  market: null,
 
   buyers: [],
 
